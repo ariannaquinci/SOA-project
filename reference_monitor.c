@@ -33,7 +33,7 @@
 //#include "reference_monitor_errors.h"
 
 #define target_func0 "do_filp_open"
-#define target_func1 "do_mkdir"
+#define target_func1 "vfs_mkdir"
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
 
@@ -45,9 +45,10 @@ MODULE_DESCRIPTION("see the README file");
 
 #define MODNAME "Reference monitor"
 
-#define MAX_LEN 128
+#define MAX_LEN 1024
 #define MAX_PATHS 128
-
+#define PASS_LEN 20
+#define MAX_PARENTS 10
 static ssize_t RM_write(struct file *, const char *, size_t, loff_t *);
 
 #define DEVICE_NAME "/dev/reference_monitor"  /* Device file name in /dev/ */
@@ -64,19 +65,21 @@ typedef enum reference_monitor_state{
 
 typedef struct reference_monitor_info{
 	ref_monitor_state state;
-	char *passwd; 
-	char *blacklist[MAX_PATHS];
+	char passwd[PASS_LEN]; 
+	char blacklist[MAX_PATHS][MAX_LEN];
 	int pos;
 	
 }RM_info;
 
 static RM_info info;
 
+
 #define LINE_SIZE 256
 
 
 int RM_change_pw(char*new){
-	info.passwd=new;
+	if(strlen(new)> PASS_LEN-1){return -1;}
+	strncpy(info.passwd,strcat(new,"\0"), strlen(new)+1);
 	printk("password changed to: %s", info.passwd);
 	return 0;
 }
@@ -89,7 +92,7 @@ char *get_absolute_path(struct file *f) {
     
     path = f->f_path;
 
-	//absolute path of the directory containing the file
+//absolute path of the directory containing the file
     char *dir_path;
     dir_path = d_path(&path, (char *)__get_free_page(GFP_KERNEL), PAGE_SIZE);
     if (!dir_path){        return NULL;}
@@ -98,7 +101,40 @@ char *get_absolute_path(struct file *f) {
     return dir_path;
 }
 
-
+char * get_absolute_path_by_name(char *name) {
+    printk("into get absolute path from name");
+    
+    struct path path;
+    int err = kern_path(name, LOOKUP_FOLLOW, &path);
+   if(err<0){
+   	printk("file doesn't exist");
+   	return NULL;
+   }
+    char *result= (char*)kmalloc(sizeof(char)*MAX_LEN,GFP_KERNEL);
+    char* abs_path;
+     if (!result) {
+        printk("Error allocating memory for result");
+        return NULL;
+    }
+    memset(result,0, MAX_LEN);
+    if (!err) {
+        // Ottieni il percorso assoluto utilizzando d_path()
+        abs_path=d_path(&path, result, MAX_LEN);
+        if (!result) {
+            printk("error in d_path: cannot retrieve absolute path");
+              kfree(result);
+            return NULL;
+        }
+    } else {
+        printk("error in kern_path");
+          kfree(result);
+        return NULL;
+    }
+    
+    printk("absolute path retrieved correctly: %s", abs_path);
+    kfree(result);
+    return abs_path;
+}
 int RM_add_path(char *new_path){
 
 	//check if status is reconfigurable, otherwise exit without applying changes
@@ -107,57 +143,63 @@ int RM_add_path(char *new_path){
 		return -1;
 	}
 	
-	int pos;
-	ssize_t ret;
-	char* file_path;
-	struct file * f;
-	f=filp_open(new_path, O_RDONLY, 0);
-    	if (IS_ERR(f)) {
-		printk(KERN_ERR "Impossible to open file %s\n", new_path);
-		return -1;
-    	}
+	
     	
-    	char* abs_path;
-    	abs_path=get_absolute_path(f);
-    	//printk("path retrieved: %s",abs_path);
+    	char * abs_path;
+    	abs_path=get_absolute_path_by_name(new_path);
+    	if(abs_path==NULL){
+    		printk("file doesn't exist");
+    		return -1;
+    	}
+    	printk("add_path: path retrieved: %s",abs_path);
     	
 	//check if path is already present in blacklist
 	int i;
-    	for(i=0; i<=info.pos; i++){
+    	for(i=1; i<=info.pos; i++){
+    		printk("Element %d is %s",i, info.blacklist[i]);
 		if(strcmp(info.blacklist[i], abs_path)==0){
 			printk("element already in blacklist");
 			return -1;
 		}
 	}
-	info.blacklist[info.pos+1]=abs_path;
-	printk("blacklist has a new element:%s", info.blacklist[pos+1]);
-	for(pos=0; pos<=info.pos; pos++){
-		printk(info.blacklist[pos]);
-	}
-	info.pos++;
-	return ret;
+	printk("position to write: %d", info.pos+1);
+	if(strlen(abs_path)+1> MAX_LEN){printk("path is too long"); return -1;}
+	strncpy(info.blacklist[++info.pos],strcat(abs_path,"\0"), strlen(abs_path)+1);	
+	printk("blacklist has a new element:%s", info.blacklist[info.pos]);
+	
+	
+	
+	return 0;
 		
 }
 int RM_remove_path(char * path){
 	struct file *f;
-	f=filp_open(path, O_RDONLY, 0);
+	/*f=filp_open(path, O_RDONLY, 0);
     	if (IS_ERR(f)) {
 		printk(KERN_ERR " file %s not existent \n", path);
 		return -1;
+    	}*/
+    	
+    	printk("removing path %s", path);
+	char* abs_path=get_absolute_path_by_name(path);
+	if(abs_path==NULL){
+    		printk("file doesn't exist");
+    		return -1;
     	}
-	char* abs_path=get_absolute_path(f);
-	int i=0;
-	for(i=0; i<=info.pos; i++){
+	int i;
+	for(i=1; i<=info.pos; i++){
+		printk("element %d in blacklist is: %s and pos is: %d",i, info.blacklist[i], info.pos);
 		if(strcmp(info.blacklist[i], abs_path)==0){
 			if(i!=info.pos){
-				info.blacklist[i]=info.blacklist[info.pos];
-				info.blacklist[info.pos]=NULL;
+				memset(info.blacklist[i],0,MAX_LEN);
+				strncpy(info.blacklist[i],info.blacklist[info.pos], strlen(info.blacklist[info.pos]));
+				
 				info.pos--;
 			}else{
-				printk("element %d in blacklist is: %s and pos is: %d",i, info.blacklist[i], info.pos);
-				info.blacklist[i]=NULL;
+				
+				memset(info.blacklist[i],0,MAX_LEN);
 				info.pos--;
-				printk("element %d in blacklist is: %s and pos is:%d",i, info.blacklist[i], info.pos);
+				
 				
 			}
 			printk("element removed");
@@ -170,26 +212,88 @@ int RM_remove_path(char * path){
 }
 int checkBlacklist(char* open_path){
 	//checking blacklist
-	printk("checking blacklist");
+	
+	if (open_path==NULL){
+	
+		return -1;
+	}
+	printk("checking blacklist for the file %s", open_path);
 	int i;
-	for(i=0; i<=info.pos; i++){
+	printk("pos is %d", info.pos);
+	for(i=1; i<=info.pos; i++){
+		printk("Element %d is %s", i, info.blacklist[i]);
 		if(strcmp(info.blacklist[i], open_path)==0){
 			
 			printk(KERN_ERR "Error: cannot open file in write mode because path is in the blacklist");
-			return 0;
+			return -EPERM ;
 		}
 	}
 	
 	return 0;
 }
 
-static int do_mkdir_wrapper(struct kprobe *ri, struct pt_regs *the_regs){	return 0;}
+
+static int vfs_mkdir_wrapper(struct kprobe *ri, struct pt_regs *the_regs){	return 0;}
 
 static int do_rmdir_wrapper(struct kprobe *ri, struct pt_regs *the_regs){
 	return 0;
 }
 
-static int do_unlinkat_wrapper(struct kprobe *ri, struct pt_regs *regs){	return 0;}
+static int do_unlinkat_wrapper(struct kprobe *ri, struct pt_regs *regs){	
+	
+
+	switch(info.state){
+			
+		 char result[MAX_LEN];
+		struct open_flags *flags; 
+		char *name;
+		struct file *file ;
+		int open_mode ;
+		
+		char *abs_path;
+		 if (!abs_path) {
+			printk("Error allocating memory for result");
+			return NULL;
+	    	}
+			memset(abs_path,0,MAX_LEN);
+			
+			
+			case(OFF):
+			case(REC_OFF):
+				//if RM is OFF or REC_OFF return immediately
+				
+				break;
+			case(ON):
+			case(REC_ON):
+			
+	printk("Into do_unlinkat");
+					memset(result, 0, MAX_LEN);
+				//things to do when RM is ON or REC_ON
+				//check if path has been opened in write mode
+				
+				name= ((struct filename *)(regs->si))->name;
+				printk("do unlink called on file %s",name );
+				 if (IS_ERR(name)) {
+					pr_err("Error getting filename\n");
+					return 0;
+		    		}
+		    		
+					 
+				abs_path=get_absolute_path_by_name(name);
+				printk("Absolute path returned %s",abs_path );
+				checkBlacklist(abs_path);
+					
+				
+				break;
+				
+			default:
+				break;
+			
+		}
+		
+		return 0;
+	
+}
 
 
 /*
@@ -226,17 +330,23 @@ struct filename {
 	const char		iname[];
 };*/
 static int do_filp_open_wrapper(struct kprobe *ri, struct pt_regs *regs){
-  	
+  
 	
 
 	switch(info.state){
-		char argument[MAX_LEN];
 		
-		char *abs_path=(char*)kmalloc(MAX_LEN*sizeof(char), GFP_KERNEL);
+		 char result[MAX_LEN];
 		struct open_flags *flags; 
-		char *name=(char*)kmalloc(MAX_LEN*sizeof(char), GFP_KERNEL); ;
+		char *name;
 		struct file *file ;
 		int open_mode ;
+		
+		char *abs_path;
+		 if (!abs_path) {
+        printk("Error allocating memory for result");
+        return NULL;
+    }
+		memset(abs_path,0,MAX_LEN);
 		
 		
 		case(OFF):
@@ -246,10 +356,9 @@ static int do_filp_open_wrapper(struct kprobe *ri, struct pt_regs *regs){
 			break;
 		case(ON):
 		case(REC_ON):
-				
+				memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
-			//dx è il terzo argomento, quindi l'indirizzo della struct open_flags
 			
 			name= ((struct filename *)(regs->si))->name;
 			 if (IS_ERR(name)) {
@@ -264,31 +373,33 @@ static int do_filp_open_wrapper(struct kprobe *ri, struct pt_regs *regs){
 				break;
 			 }
 			 
-			flags= (struct open_flags *)(regs->dx);
+			flags= (struct open_flags *)(regs->dx); //access to dx that is the thirth argument
 			
 			open_mode =flags->open_flag;
 			
-			printk("trying to open file: %s", name);
-			printk("open mode is: %d", open_mode);
-			if(open_mode & O_RDWR || open_mode & O_WRONLY){
-				printk("checking opening mode of the file");
+			if( open_mode & O_RDWR || open_mode & O_WRONLY){
+				printk("file opened in write mode");
+				 
+				abs_path=get_absolute_path_by_name(name);
+				printk("Absolute path returned %s",abs_path );
 				
-				checkBlacklist(name);
+				checkBlacklist(abs_path);
+				
 			}
-			if(open_mode & O_RDONLY){
-				printk("file opened in read only mode");
-			}
+				
+				
+			
 			break;
 			
 		default:
 			break;
 		
-	}
-	return 0;
 	
-	
-	
+}
 
+	
+	
+ret:	return 0;
 
 }
 static int RM_open(struct inode *inode, struct file *file) {
@@ -317,7 +428,7 @@ static struct kprobe kp_open = {
 
 static struct kprobe kp_mkdir = {
         .symbol_name =  target_func1,
-        .pre_handler = do_mkdir_wrapper,
+        .pre_handler = vfs_mkdir_wrapper,
 };
 
 
@@ -340,10 +451,6 @@ int reference_monitor_on(void){
 	
 	printk("into reference_monitor_on");
 	printk("RM was %d\n", info.state);
-	if(info.state==OFF || info.state==REC_OFF){
-		printk("enbling kprobe");
-		enable_kprobe(&kp_open);
-	}
 	
 	info.state=ON;
 	printk("RM is %d\n", info.state);
@@ -352,10 +459,7 @@ int reference_monitor_on(void){
 }
 int reference_monitor_off(void){
 		printk("into reference_monitor_off");
-		if(info.state==ON || info.state==REC_ON){
-			printk("kprobe disabled");
-			disable_kprobe(&kp_open);
-		}
+		
 		info.state=OFF;
 		printk("RM is %d\n", info.state);
 		return 0;
@@ -364,10 +468,7 @@ int reference_monitor_off(void){
 
 int reference_monitor_rec_off(void){
 		printk("into reference_monitor_rec_off");
-		if(info.state==ON || info.state==REC_ON){
-			printk("disabling kprobe");
-			disable_kprobe(&kp_open);
-		}
+		
 		info.state=REC_OFF;
 		printk("RM is %d\n", info.state);
 		return 0;
@@ -377,9 +478,6 @@ int reference_monitor_rec_off(void){
 int reference_monitor_rec_on(void){
 
 	printk("into reference_monitor_rec_on");
-	if(info.state==OFF || info.state==REC_OFF){
-		enable_kprobe(&kp_open);
-	}
 	
 		info.state=REC_ON;
 		printk("RM is %d\n", info.state);
@@ -439,7 +537,7 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 			
 			RM_add_path(args[1]);
 		}
-		if(strcmp(args[0],"delete_path")==0){
+		if(strcmp(args[0],"remove_path")==0){
 		
 			RM_remove_path(args[1]);
 		}
@@ -473,20 +571,21 @@ int init_module(void) {
 	
 	//init info 
 	info.state=OFF;
-	info.passwd="changeme";
-	info.blacklist[0] = "this is the blacklist";
-	info.pos = 0;
+	strncpy(info.passwd, "changeme\0", strlen("changeme\0") );
+	strncpy(	info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
+	
 	ret = register_kprobe(&kp_open);
      if (ret < 0) {
                 printk("%s: kprobe filp open registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
-          /* 
-       ret = register_kprobe(&kp_mkdir);
+           
+      ret = register_kprobe(&kp_mkdir);
         if (ret < 0) {
                 printk("%s: kprobe mkdir registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
+        
        ret = register_kprobe(&kp_rmdir);
         if (ret < 0) {
                 printk("%s: kprobe rmdir registering failed, returned %d\n",MODNAME,ret);
@@ -500,7 +599,6 @@ int init_module(void) {
                 return ret;
         }
         
-        */
 	return 0;
 }
 
@@ -512,11 +610,11 @@ void cleanup_module(void) {
         //unregistering kprobes
         unregister_kprobe(&kp_open);
      
-    /*    unregister_kprobe(&kp_mkdir);
+       unregister_kprobe(&kp_mkdir);
         
         unregister_kprobe(&kp_rmdir);
         
-        unregister_kprobe(&kp_unlink);*/
+        unregister_kprobe(&kp_unlink);
         printk("%s: kprobes unregistered\n", MODNAME);
         unregister_chrdev(Major, DEVICE_NAME);
         printk(KERN_INFO "%s: device unregistered, it was assigned major number %d\n",DEVICE_NAME,Major);
