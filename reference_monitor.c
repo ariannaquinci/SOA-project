@@ -415,7 +415,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				
 				printk("Absolute path returned %s",abs_path );
 				
-				if ((checkBlacklist(abs_path)==-EPERM )){
+				if ((checkBlacklist(abs_path)==-EPERM &&abs_path!=NULL )){
 					printk(KERN_ERR "Error: path is in blacklist");
 					struct my_data *data;
 					data = (struct my_data *)ri->data;
