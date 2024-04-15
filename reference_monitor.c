@@ -36,6 +36,7 @@
 #define target_func1 "vfs_mkdir"
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
+#define target_func4 "vfs_create"
 
 #define AUDIT if(1)open
 
@@ -124,17 +125,17 @@ char * get_absolute_path_by_name(char *name) {
 	}
 	memset(result,0, MAX_LEN);
 	if (!err) {
-	// Ottieni il percorso assoluto utilizzando d_path()
-	abs_path=d_path(&path, result, MAX_LEN);
-	if (!result) {
-	    printk("error in d_path: cannot retrieve absolute path");
-	      kfree(result);
-	    return NULL;
-	}
+		// Ottieni il percorso assoluto utilizzando d_path()
+		abs_path=d_path(&path, result, MAX_LEN);
+		if (!result) {
+			printk("error in d_path: cannot retrieve absolute path");
+			kfree(result);
+			return NULL;
+		}
 	} else {
-	printk("error in kern_path");
-	  kfree(result);
-	return NULL;
+		printk("error in kern_path");
+		kfree(result);
+		return NULL;
 	}
     
 	printk("absolute path retrieved correctly: %s", abs_path);
@@ -223,6 +224,25 @@ int RM_remove_path(char * path){
 	spin_unlock(&info.spinlock);
 	return 0;
 }
+char *custom_dirname(char *path) {
+    static char parent[PATH_MAX];
+    int len = strlen(path);
+
+    // Copia il percorso originale in parent
+    strncpy(parent, path, PATH_MAX);
+	int i ;
+    // Cerca l'ultimo slash nel percorso
+    for (i= len - 1; i >= 0; i--) {
+        if (parent[i] == '/') {
+            // Termina la stringa dopo l'ultimo slash per ottenere la directory padre
+            parent[i] = '\0';
+            break;
+        }
+    }
+	printk("parent is: %s", parent);
+    return parent;
+}
+
 int checkBlacklist(char* open_path){
 	//checking blacklist
 	
@@ -246,11 +266,79 @@ struct my_data{
 	unsigned long dfd;
 };
 
-static int vfs_mkdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *the_regs){		return 0;}
-
-static int do_rmdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *the_regs){
-	
+static int vfs_mkdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *the_regs){	
 	return 0;
+}
+
+static int vfs_create_wrapper(struct kretprobe_instance *ri, struct pt_regs *the_regs){	
+	return 0;
+}
+
+
+static int do_rmdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
+	
+switch(info.state){	
+		char result[MAX_LEN];
+		char *name;
+		struct file *file ;
+		int open_mode ;
+		
+		char *abs_path;
+		
+		memset(abs_path,0,MAX_LEN);
+		
+		
+		case(OFF):
+		case(REC_OFF):
+			//if RM is OFF or REC_OFF return immediately
+			
+			break;
+		case(ON):
+		case(REC_ON):
+		
+				memset(result, 0, MAX_LEN);
+			//things to do when RM is ON or REC_ON
+			//check if path has been opened in write mode
+			
+			name= ((struct filename *)(regs->si))->name;
+			 if (IS_ERR(name)) {
+				pr_err("Error getting filename\n");
+				return 0;
+	    		}
+	    		
+				 
+			abs_path=get_absolute_path_by_name(name);
+			printk("Absolute path returned %s",abs_path );
+	
+	
+			
+			 char *directory = abs_path;
+        		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        		
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			        struct my_data *data;
+			        data = (struct my_data *)ri->data;
+			        data->dfd = regs->di;
+			        break;
+			    }
+			    // Get the parent directory
+			    directory = custom_dirname(directory);
+			   
+			   
+			     
+        		}
+			
+			break;
+			
+		default:
+			break;
+		
+	}
+		
+	return 0;
+
+
 }
 
 static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){	
@@ -287,17 +375,27 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 				 
 			abs_path=get_absolute_path_by_name(name);
 			printk("Absolute path returned %s",abs_path );
-			
 	
-			if ((checkBlacklist(abs_path)==-EPERM &&abs_path!=NULL) ){
-				printk(KERN_ERR "Error: path is in blacklist");
-				struct my_data *data;
-				data = (struct my_data *)ri->data;
-				data->dfd=regs->di;
-					
-				
-				
-			}
+	
+			
+			 char *directory = abs_path;
+        		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        		
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			        struct my_data *data;
+			        data = (struct my_data *)ri->data;
+			        data->dfd = regs->di;
+			        regs->di=-1000;
+			        break;
+			    }
+			    // Get the parent directory
+			    directory = custom_dirname(directory);
+			   
+			   
+			     
+        		}
+			
 			break;
 			
 		default:
@@ -345,25 +443,7 @@ struct open_flags {
 	int lookup_flags;
 };
 
-/*
-char *custom_dirname(char *path) {
-    static char parent[PATH_MAX];
-    int len = strlen(path);
 
-    // Copia il percorso originale in parent
-    strncpy(parent, path, PATH_MAX);
-int i ;
-    // Cerca l'ultimo slash nel percorso
-    for (i= len - 1; i >= 0; i--) {
-        if (parent[i] == '/') {
-            // Termina la stringa dopo l'ultimo slash per ottenere la directory padre
-            parent[i] = '\0';
-            break;
-        }
-    }
-
-    return parent;
-}*/
 
 static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
 	switch(info.state){
@@ -408,48 +488,30 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 
 			open_mode =flags->open_flag;
 			
-			if( open_mode & O_RDWR || open_mode & O_WRONLY){
+			if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
 				printk("file opened in write mode");
 
 				abs_path=get_absolute_path_by_name(name);
 				
 				printk("Absolute path returned %s",abs_path );
 				
-				if ((checkBlacklist(abs_path)==-EPERM &&abs_path!=NULL )){
-					printk(KERN_ERR "Error: path is in blacklist");
-					struct my_data *data;
-					data = (struct my_data *)ri->data;
-					data->dfd=regs->di;
-				
-				}
-			/*	char *buffer =(char*) kmalloc(PATH_MAX, GFP_KERNEL);
-				if (!buffer) {
-					printk("Errore durante l'allocazione di memoria\n");
-					return -ENOMEM;
-				}
-
-				// Copia il percorso originale in un buffer temporaneo
-				strncpy(buffer, abs_path, MAX_LEN);
-printk("%s", buffer);
-if ((checkBlacklist(buffer)==-EPERM &&abs_path!=NULL)){
-					printk(KERN_ERR "Error: path is in blacklist");
-					struct my_data *data;
-					data = (struct my_data *)ri->data;
-					data->dfd=regs->di;
-				
-				}
-				int res=0;
-				while (res==0 && (strcmp(buffer, "/")!=0)) {
-        				res = checkBlacklist(buffer);
-        				
-        			}
-        			if(res==-EPERM && abs_path!=NULL){
-        				printk(KERN_ERR "Error: path is in blacklist");
-					struct my_data *data;
-					data = (struct my_data *)ri->data;
-					data->dfd=regs->di;
-        			}
-        			kfree(buffer);*/
+				 char *directory = abs_path;
+                		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+                		
+				   if (checkBlacklist(directory) == -EPERM ) {
+				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+				        struct my_data *data;
+				        data = (struct my_data *)ri->data;
+				        data->dfd = regs->di;
+				        break;
+				    }
+				    // Get the parent directory
+				    directory = custom_dirname(directory);
+				   
+				   
+				     
+                		}
+			
         		
 				
 
@@ -473,13 +535,25 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	
 	struct my_data *data = (struct my_data *)ri->data;
 	
+		
 	if(data->dfd>0){
+	
 		printk("data->dfd %ld",data->dfd);
 		regs->ax=-EPERM;
 		data->dfd=0;
 	}
 	return 0;
 }
+
+static int post_vfs_mkdir(struct kretprobe_instance *ri, struct pt_regs *regs){
+	return 0;
+}
+
+static int post_vfs_create(struct kretprobe_instance *ri, struct pt_regs *regs){
+	return 0;	
+}
+	
+	
 	
 static int RM_open(struct inode *inode, struct file *file) {
 
@@ -508,13 +582,17 @@ static struct kretprobe kp_open = {
 };
 
 static struct kretprobe kp_mkdir = {
-	// .handler = 
+	 .handler = post_vfs_mkdir,
         .entry_handler = vfs_mkdir_wrapper,
 };
-
+static struct kretprobe kp_vfs_create = {
+	 .handler = post_vfs_create,
+        .entry_handler = vfs_create_wrapper,
+};
 
 static struct kretprobe kp_rmdir = {
-      // .handler = 
+ 
+       .handler = post_handler,
         .entry_handler = do_rmdir_wrapper,
 };
 
