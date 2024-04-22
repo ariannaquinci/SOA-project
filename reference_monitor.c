@@ -33,10 +33,10 @@
 //#include "reference_monitor_errors.h"
 
 #define target_func0 "do_filp_open"
-#define target_func1 "vfs_mkdir"
+#define target_func1 "do_mkdirat"
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
-#define target_func4 "vfs_create"
+
 
 #define AUDIT if(1)open
 
@@ -135,18 +135,17 @@ int temporal_file(const char *str) {
 }
 
 char * get_absolute_path_by_name(char *name) {
-	printk("into get absolute path by name");
 
 	struct path path;
 	int err = kern_path(name, LOOKUP_FOLLOW, &path);
 	if(err<0){
-	printk("file doesn't exist");
-	return NULL;
+		printk(KERN_ERR "file doesn't exist");
+		return NULL;
 	}
 	char *result= (char*)kmalloc(sizeof(char)*MAX_LEN,GFP_KERNEL);
 	char* abs_path;
 	if (!result) {
-	printk("Error allocating memory for result");
+	printk(KERN_ERR "Error allocating memory for result");
 	return NULL;
 	}
 	memset(result,0, MAX_LEN);
@@ -154,17 +153,16 @@ char * get_absolute_path_by_name(char *name) {
 		// Ottieni il percorso assoluto utilizzando d_path()
 		abs_path=d_path(&path, result, MAX_LEN);
 		if (!result) {
-			printk("error in d_path: cannot retrieve absolute path");
+			printk(KERN_ERR "error in d_path: cannot retrieve absolute path");
 			kfree(result);
 			return NULL;
 		}
 	} else {
-		printk("error in kern_path");
+		printk(KERN_ERR "error in kern_path");
 		kfree(result);
 		return NULL;
 	}
     
-	printk("absolute path retrieved correctly: %s", abs_path);
 	kfree(result);
 	return abs_path;
 }
@@ -173,7 +171,7 @@ int RM_add_path(char *new_path){
 	//check if status is reconfigurable, otherwise exit without applying changes
 	if(info.state==ON || info.state==OFF){
 		spin_unlock(&info.spinlock);
-		printk("impossible to change blacklist because monitor status is not reconfigurable");
+		printk(KERN_ERR "impossible to change blacklist because monitor status is not reconfigurable");
 		return -1;
 	}
 	
@@ -182,27 +180,28 @@ int RM_add_path(char *new_path){
     	char * abs_path;
     	abs_path=get_absolute_path_by_name(new_path);
     	if(abs_path==NULL){
-    		printk("file doesn't exist");
+    		printk(KERN_ERR "file doesn't exist");
     		spin_unlock(&info.spinlock);
     		return -1;
     	}
-    	printk("add_path: path retrieved: %s",abs_path);
     	
 	//check if path is already present in blacklist
 	int i;
     	for(i=1; i<=info.pos; i++){
-    		printk("Element %d is %s",i, info.blacklist[i]);
+    		
 		if(strcmp(info.blacklist[i], abs_path)==0){
 			printk("element already in blacklist");
 			spin_unlock(&info.spinlock);
 			return -1;
 		}
 	}
-	printk("position to write: %d", info.pos+1);
-	if(strlen(abs_path)+1> MAX_LEN){printk("path is too long"); spin_unlock(&info.spinlock); return -1;}
-	strncpy(info.blacklist[++info.pos],strcat(abs_path,"\0"), strlen(abs_path)+1);	
-	printk("blacklist has a new element:%s", info.blacklist[info.pos]);
 	
+	if(strlen(abs_path)+1> MAX_LEN){
+		printk(KERN_ERR "path is too long"); 
+		spin_unlock(&info.spinlock); 
+		return -1;
+	}
+	strncpy(info.blacklist[++info.pos],strcat(abs_path,"\0"), strlen(abs_path)+1);	
 	
 	spin_unlock(&info.spinlock);
 	return 0;
@@ -211,22 +210,15 @@ int RM_add_path(char *new_path){
 int RM_remove_path(char * path){
 	spin_lock(&info.spinlock);
 	struct file *f;
-	/*f=filp_open(path, O_RDONLY, 0);
-    	if (IS_ERR(f)) {
-		printk(KERN_ERR " file %s not existent \n", path);
-		return -1;
-    	}*/
-    	
-    	printk("removing path %s", path);
 	char* abs_path=get_absolute_path_by_name(path);
 	if(abs_path==NULL){
-    		printk("file doesn't exist");
+    		printk(KERN_ERR "file doesn't exist");
     		spin_unlock(&info.spinlock);
     		return -1;
     	}
 	int i;
 	for(i=1; i<=info.pos; i++){
-		printk("element %d in blacklist is: %s and pos is: %d",i, info.blacklist[i], info.pos);
+		
 		if(strcmp(info.blacklist[i], abs_path)==0){
 			if(i!=info.pos){
 				memset(info.blacklist[i],0,MAX_LEN);
@@ -240,13 +232,11 @@ int RM_remove_path(char * path){
 				
 				
 			}
-			printk("element removed");
-			printk("pos is: %d", info.pos);
 			spin_unlock(&info.spinlock);
 			return 0;
 		}
 	}
-	printk("No such file in blacklist");
+	printk(KERN_ERR "No such file in blacklist");
 	spin_unlock(&info.spinlock);
 	return 0;
 }
@@ -265,7 +255,6 @@ char *custom_dirname(char *path) {
             break;
         }
     }
-	printk("parent is: %s", parent);
     return parent;
 }
 
@@ -276,11 +265,9 @@ int checkBlacklist(char* open_path){
 	
 		return -1;
 	}
-	printk("checking blacklist for the file %s", open_path);
+	
 	int i;
-	printk("pos is %d", info.pos);
 	for(i=1; i<=info.pos; i++){
-		printk("Element %d is %s", i, info.blacklist[i]);
 		if(strcmp(info.blacklist[i], open_path)==0){
 			return -EPERM;
 		}
@@ -292,13 +279,61 @@ struct my_data{
 	unsigned long dfd;
 };
 
-static int vfs_mkdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *the_regs){	
+static int do_mkdirat_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
+		
+switch(info.state){	
+		char *directory;
+		char*name; 
+		char* abs_path;
+		memset(abs_path,0,MAX_LEN);
+		
+		
+		case(OFF):
+		case(REC_OFF):
+			//if RM is OFF or REC_OFF return immediately
+			
+			break;
+		case(ON):
+		case(REC_ON):
+			printk("into mkdir wrapper");	
+			
+			name=((struct filename *)(regs->si))->name;
+			
+			//retrieve the parent and get its absolute path
+			name= custom_dirname(name);
+			abs_path=get_absolute_path_by_name(name);
+			if(abs_path==NULL){
+				directory=get_cwd();
+			}else{
+				directory=abs_path;
+			}
+			while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        			printk("directory is %s",directory);
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			      	struct my_data *data;
+			        data = (struct my_data *)ri->data;
+			        data->dfd = regs->di;
+			        printk("dfd is %ld",regs->di );
+			      regs->di=-1000;
+			        return 0;
+			    }
+			    // Get the parent directory
+			    directory = custom_dirname(directory);
+			   
+			   
+			     
+        		}
+                default:
+			
+			break;
+		}
+	
+	
+	
 	return 0;
 }
 
-static int vfs_create_wrapper(struct kretprobe_instance *ri, struct pt_regs *the_regs){	
-	return 0;
-}
 
 
 static int do_rmdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
@@ -334,7 +369,6 @@ switch(info.state){
 	    		
 				 
 			abs_path=get_absolute_path_by_name(name);
-			printk("Absolute path returned %s",abs_path );
 	
 	
 			
@@ -392,9 +426,9 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 			//check if path has been opened in write mode
 			
 			name= ((struct filename *)(regs->si))->name;
-			printk("do unlink called on file %s",name );
+			
 			 if (IS_ERR(name)) {
-				pr_err("Error getting filename\n");
+				pr_err(KERN_ERR "Error getting filename\n");
 				return 0;
 	    		}
 	    		if(temporal_file(name)){
@@ -402,9 +436,6 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 	    		}
 				 
 			abs_path=get_absolute_path_by_name(name);
-			printk("Absolute path returned %s",abs_path );
-	
-	
 			
 			 char *directory = abs_path;
         		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
@@ -500,7 +531,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 
 			name= ((struct filename *)(regs->si))->name;
 			if (IS_ERR(name)) {
-				pr_err("Error getting filename\n");
+				pr_err(KERN_ERR "Error getting filename\n");
 				return 0;
 			}
 			//se file sono temporanei ritorno subito idem se il file è il dispositivo reference_monitor
@@ -520,7 +551,6 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 			char *directory;
 			abs_path=get_absolute_path_by_name(name);
 			if(open_mode & O_CREAT && abs_path==NULL){
-				printk("Not existent file opened in O_CREAT mode");
 				
 				directory=get_cwd();
 				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
@@ -543,11 +573,8 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 					
 			}
 			else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
-				printk("file opened in write mode");
-
-				abs_path=get_absolute_path_by_name(name);
 				
-				printk("Absolute path returned %s",abs_path );
+				abs_path=get_absolute_path_by_name(name);
 				
 				directory = abs_path;
 				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
@@ -594,21 +621,13 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	struct my_data *data = (struct my_data *)ri->data;
 	
 	if(data->dfd>0){
-	printk("post handler: dfd saved is: %ld", data->dfd);
 		regs->ax=-EPERM;
 		data->dfd=0;
 	}
 	return 0;
 }
 
-static int post_vfs_mkdir(struct kretprobe_instance *ri, struct pt_regs *regs){
-	return 0;
-}
 
-static int post_vfs_create(struct kretprobe_instance *ri, struct pt_regs *regs){
-	return 0;	
-}
-	
 	
 	
 static int RM_open(struct inode *inode, struct file *file) {
@@ -638,13 +657,10 @@ static struct kretprobe kp_open = {
 };
 
 static struct kretprobe kp_mkdir = {
-	 .handler = post_vfs_mkdir,
-        .entry_handler = vfs_mkdir_wrapper,
+	 .handler = post_handler,
+        .entry_handler =do_mkdirat_wrapper,
 };
-static struct kretprobe kp_vfs_create = {
-	 .handler = post_vfs_create,
-        .entry_handler = vfs_create_wrapper,
-};
+
 
 static struct kretprobe kp_rmdir = {
  
@@ -721,7 +737,7 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 	kfree(buffer);
   	
 	if(strcmp(args[2],info.passwd)==0){
-		printk("password is correct");
+		
 		if(strcmp(args[0],"new_state")==0){
 			if(strcmp(args[1],"ON")==0){
 					
@@ -736,7 +752,7 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 					reference_monitor_rec_off();
 			}
 			if(strcmp(args[1],"REC_ON")==0){
-					printk("asked to change state to REC_ON");
+					
 					reference_monitor_rec_on();
 			}else{
 				printk("Invalid argument");
