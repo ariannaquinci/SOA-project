@@ -108,6 +108,32 @@ char *get_absolute_path(struct file *f) {
 
 
 
+char *get_cwd(void){
+	
+	struct path abs_path;
+    	char *buf;
+    	
+	buf = kmalloc(1024,GFP_KERNEL);
+	if(buf == NULL) return "";
+
+    	get_fs_pwd(current->fs, &abs_path);
+
+    	return dentry_path_raw(abs_path.dentry, buf, PATH_MAX);
+}
+
+int temporal_file(const char *str) {
+    size_t len = strlen(str);
+    
+    // Verifica se la lunghezza della stringa è maggiore di 0 e se l'ultimo carattere è '~'
+    if (len > 0 && str[len - 1] == '~' ||
+     len >4 &&	(str[len - 1]=='p' &&  str[len - 2]=='w' &&str[len - 3]=='s' &&str[len - 4]=='.')||
+    	(len >5 && str[len - 1]=='x' && str[len - 2]=='p' && str[len - 3]=='w' &&str[len - 4]=='s' &&str[len - 6]=='.')) {
+        return 1; // La stringa termina con '~'
+    }
+    
+    return 0; // La stringa non termina con '~'
+}
+
 char * get_absolute_path_by_name(char *name) {
 	printk("into get absolute path by name");
 
@@ -360,8 +386,8 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 			break;
 		case(ON):
 		case(REC_ON):
-		
-				memset(result, 0, MAX_LEN);
+			
+			memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
 			
@@ -371,7 +397,9 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 				pr_err("Error getting filename\n");
 				return 0;
 	    		}
-	    		
+	    		if(temporal_file(name)){
+	    			return 0;
+	    		}
 				 
 			abs_path=get_absolute_path_by_name(name);
 			printk("Absolute path returned %s",abs_path );
@@ -487,35 +515,65 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 			flags= (struct open_flags *)(regs->dx); //access to dx that is the thirth argument
 
 			open_mode =flags->open_flag;
-			
-			if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
-				printk("file opened in write mode");
-
-				abs_path=get_absolute_path_by_name(name);
+			unsigned long fd;
+			fd= regs->di;
+			char *directory;
+			abs_path=get_absolute_path_by_name(name);
+			if(open_mode & O_CREAT && abs_path==NULL){
+				printk("Not existent file opened in O_CREAT mode");
 				
-				printk("Absolute path returned %s",abs_path );
-				
-				 char *directory = abs_path;
-                		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+				directory=get_cwd();
+				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
                 		
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-				        struct my_data *data;
-				        data = (struct my_data *)ri->data;
-				        data->dfd = regs->di;
-				        break;
+				       
+				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
+				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
+				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
+				     	flags->open_flag&= O_RDONLY;
+				        return 0;
 				    }
 				    // Get the parent directory
 				    directory = custom_dirname(directory);
 				   
 				   
 				     
-                		}
+                	}
+					
+			}
+			else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
+				printk("file opened in write mode");
+
+				abs_path=get_absolute_path_by_name(name);
+				
+				printk("Absolute path returned %s",abs_path );
+				
+				directory = abs_path;
+				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+                		
+				   if (checkBlacklist(directory) == -EPERM ) {
+				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+				       struct my_data *data;
+				        data = (struct my_data *)ri->data;
+				        data->dfd = regs->di;
+				        printk("dfd is %ld",regs->di );
+				        return 0;
+				    }
+				    // Get the parent directory
+				    directory = custom_dirname(directory);
+				   
+				   
+				     
+                	}
+			}
+			
+                	
 			
         		
 				
 
-			}
+			
 
 			break;
 
@@ -535,10 +593,8 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	
 	struct my_data *data = (struct my_data *)ri->data;
 	
-		
 	if(data->dfd>0){
-	
-		printk("data->dfd %ld",data->dfd);
+	printk("post handler: dfd saved is: %ld", data->dfd);
 		regs->ax=-EPERM;
 		data->dfd=0;
 	}
@@ -575,7 +631,7 @@ static struct file_operations fops = {
 
 
 static struct kretprobe kp_open = {
-	 .handler = post_handler,
+	.handler = post_handler,
 	.entry_handler=do_filp_open_wrapper,
 	.data_size=sizeof(struct my_data),
 	
