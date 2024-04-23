@@ -5,6 +5,9 @@
 #include <linux/fs_struct.h>
 #include <linux/mm_types.h>
 
+#include <linux/dcache.h>
+
+
 #include "my_crypto.h"
 #include <linux/namei.h>
 #include <linux/cdev.h>
@@ -56,7 +59,7 @@ static ssize_t RM_write(struct file *, const char *, size_t, loff_t *);
 
 static int Major;            /* Major number assigned to reference monitor device driver */
 
-
+static char *the_file;
 
 typedef enum reference_monitor_state{
 	ON,
@@ -67,7 +70,7 @@ typedef enum reference_monitor_state{
 
 typedef struct reference_monitor_info{
 	ref_monitor_state state;
-	char passwd[256]; 
+	char passwd[33]; 
 	char blacklist[MAX_PATHS][MAX_LEN];
 	int pos;
 	spinlock_t spinlock; 
@@ -76,19 +79,29 @@ typedef struct reference_monitor_info{
 static RM_info info;
 
 
+size_t my_min(size_t a , size_t b){
+	if(a>=b){
+		return b;
+	}
+	return a;
+}
 #define LINE_SIZE 256
 
+
+
 bool check_passwd(char* pw){
+	printk("checking pw");
 	unsigned char *pw_digest;
-	pw_digest=kmalloc(256,GFP_KERNEL);
-	memset(pw_digest,0,256);
+	pw_digest=kmalloc(33,GFP_KERNEL);
+	memset(pw_digest,0,33);
 	int ret=0;
-	ret=do_sha256(pw, pw_digest);
+	printk("len is %d",strlen(pw));
+	ret=do_sha256(pw, pw_digest,strlen(pw));
 	if(ret!=0){
 		printk(KERN_ERR "error in calculating sha256 of the password");
 		return false;
 	}
-	if(strncmp(pw_digest, info.passwd, 256)==0){
+	if(strncmp(pw_digest, info.passwd, my_min(pw_digest, strlen(info.passwd)))==0){
 		return true;
 	}else{
 		return false;
@@ -96,33 +109,172 @@ bool check_passwd(char* pw){
 }
 
 
-int RM_change_pw(char*new){
+int RM_change_pw(char *new){
+	printk("into change password");
 	spin_lock(&info.spinlock);
 	if(strlen(new)> PASS_LEN-1){ printk(KERN_ERR "too long password"); spin_unlock(&info.spinlock); return -1;}
-	//strncpy(info.passwd,strcat(new,"\0"), strlen(new)+1);
-	do_sha256(new, info.passwd);
+	printk("len is %d", strlen(new));
+	do_sha256(new, info.passwd, strlen(new));
 	
 	spin_unlock(&info.spinlock);
 	return 0;
 }
+struct record{
+	spinlock_t spin; 
+	pid_t tgid;	//group identifier
+	pid_t pid;	//thread identifier
+	uid_t current_uid;
+	uid_t current_euid; 
+	char* program_path;
+	char  content_hash[33];
+};
 
-/*
-char *get_absolute_path(struct file *f) {
-    struct path path;
-    char *absolute_path = NULL;
+static struct record record;
 
-    
-    path = f->f_path;
 
-//absolute path of the directory containing the file
-    char *dir_path;
-    dir_path = d_path(&path, (char *)__get_free_page(GFP_KERNEL), PAGE_SIZE);
-    if (!dir_path){        return NULL;}
-    printk("absolute path retrieved: %s", dir_path);
+char *get_current_proc_path(char *buf, int buflen){
+    struct file *exe_file;
+    char *result = ERR_PTR(-ENOENT);
+    struct mm_struct *mm;
 
-    return dir_path;
+    mm = get_task_mm(current);
+    if (!mm) {
+        goto out;
+    }
+    mmap_read_lock(mm);
+    exe_file = mm->exe_file;
+    if (exe_file) {
+        get_file(exe_file);
+        path_get(&exe_file->f_path);
+    }
+    mmap_read_unlock(mm);
+    mmput(mm);
+    if (exe_file) {
+        result = d_path(&exe_file->f_path, buf, buflen);
+        path_put(&exe_file->f_path);
+        fput(exe_file);
+    }
+
+out:
+    return result;
 }
-*/
+
+#define INITIAL_BUFFER_SIZE (8 * 1024) // 8 KB
+
+ssize_t read_content(char * path, char *buf, size_t buflen) {
+    struct file *filp;
+    ssize_t ret = -EINVAL;
+ 
+    // Apre il file eseguibile in modalità di sola lettura
+    filp = filp_open(path, O_RDONLY, 0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open executable file\n");
+      
+        return PTR_ERR(filp);
+    }
+
+    ret = kernel_read(filp, buf, buflen, 0);
+    if (ret < 0) {
+        printk(KERN_ERR "Failed to read executable file\n");
+    }
+
+    // Chiude il file
+    filp_close(filp, NULL);
+    return ret;
+}
+
+
+int retrieve_informations(void){
+	struct cred *cred=get_task_cred(current);
+	
+	record.tgid=current->tgid;
+	record.pid=current->pid;
+	record.current_uid = cred->uid.val;
+	record.current_euid = cred->euid.val;
+	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
+	record.program_path=get_current_proc_path(buf, MAX_LEN);
+	kfree(buf);
+	
+	
+	char buffer[1024*8];
+	int res=0;
+	res=read_content(record.program_path, buffer,1024*8 );
+	
+	printk("res is %d and program content : %s",res, buffer);
+	
+	//questo va fatto in deferred work
+	printk("buffer lenght is: %d", strlen(buffer));
+	do_sha256(buffer, record.content_hash, strlen(buffer));
+	
+	printk("tgid: %d, pid: %d, current_uid: %d, current euid: %d, path: %s",record.tgid, record.pid, record.current_uid, record.current_euid, record.program_path);
+	print_hash(record.content_hash);
+	printk("returned from do_sha256");
+	return 0;
+}
+
+bool write_append_only(void){
+	spin_lock(&record.spin);
+	retrieve_informations();
+	char buffer[1024*8];
+	struct file *file;
+	file=filp_open(the_file, O_WRONLY|O_APPEND, 0);
+	if (IS_ERR(file)) {
+		printk(KERN_ERR "Failed to open the_file\n");
+	      
+		return PTR_ERR(file);
+    	}
+    	int ret=0;
+    	
+    	char tgid_str[20]; 
+    	char pid_str[20]; 
+	char uid_str[20]; 
+	char euid_str[20]; 
+	sprintf(tgid_str, "%d", record.tgid);	
+	sprintf(pid_str, "%d", record.pid);
+	sprintf(uid_str, "%d", record.current_uid);
+	sprintf(euid_str, "%d", record.current_euid);
+	
+    /*	ret = kernel_write(file,tgid_str, strlen(tgid_str),0);
+    	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+        	return PTR_ERR(file);
+    	}
+	ret = kernel_write(file,pid_str, strlen(pid_str),0);
+	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+        	return PTR_ERR(file);
+    	}
+	ret = kernel_write(file,uid_str, strlen(uid_str),0);
+	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+        	return PTR_ERR(file);
+    	}
+	ret = kernel_write(file,euid_str, strlen(euid_str),0);
+	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+        	return PTR_ERR(file);
+    	}
+	ret = kernel_write(file,record.program_path, strlen(record.program_path),0);
+	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+        	return PTR_ERR(file);
+    	}
+	ret = kernel_write(file,record.content_hash, strlen(record.content_hash),0);
+	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+    		return PTR_ERR(file);
+    	}*/
+    	//ret=vfs_write(file, "ciao", strlen("ciao"), &file->f_pos);
+    	/*ret = kernel_write(file,"ciao", strlen("ciao"),&file->f_pos);
+	 if (ret < 0) {
+        	printk(KERN_ERR "Failed to write the file\n");
+    		return PTR_ERR(file);
+    	}*/
+	
+	spin_unlock(&record.spin);
+	return true;
+}
+			        
 
 
 
@@ -329,6 +481,10 @@ switch(info.state){
         			printk("directory is %s",directory);
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			      
+			        //calling the function that permits to write to the append-only file
+			        write_append_only();
+			        
 			      	struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -395,6 +551,8 @@ switch(info.state){
         		
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			         //calling the function that permits to write to the append-only file
+			        write_append_only();
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -460,6 +618,8 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
         		
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			         //calling the function that permits to write to the append-only file
+			        write_append_only();
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -575,7 +735,8 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
                 		
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-				       
+				        //calling the function that permits to write to the append-only file
+			       	 write_append_only();
 				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
 				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
 				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
@@ -599,6 +760,8 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
                 		
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+				         //calling the function that permits to write to the append-only file
+			        write_append_only();
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;
@@ -817,8 +980,7 @@ int init_module(void) {
 	
 	//init info 
 	info.state=OFF;
-	do_sha256("changeme\0", info.passwd);
-	//strncpy(info.passwd, "changeme\0", strlen("changeme\0") );
+	do_sha256("changeme", info.passwd,strlen("changeme"));
 	strncpy(	info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
 	kp_open.kp.symbol_name = target_func0;
 	ret = register_kretprobe(&kp_open);
@@ -871,6 +1033,6 @@ void cleanup_module(void) {
             
 }
 
-
+module_param(the_file, charp, 0660);
 
 

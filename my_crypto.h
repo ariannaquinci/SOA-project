@@ -1,5 +1,6 @@
 #include <crypto/hash.h>
 #define SHA_256 "sha256"
+#define SHA256_DIGEST_SIZE 33
 
 static struct shash_desc shash;
 
@@ -11,17 +12,18 @@ static int calc_hash(struct crypto_shash *alg, const unsigned char *data, unsign
 	return ret;
 }
 
-static int do_sha256(const unsigned char *data, unsigned char *out_digest)
-{
+static int do_sha256(const unsigned char *data, unsigned char *out_digest, size_t datalen){
+	printk("into do_sha256");
     struct crypto_shash *alg;
     char *hash_alg_name = SHA_256;
-    unsigned int datalen = sizeof(*data) - 1; // remove the null byte
+    
 
 	/*Allocate a cipher handle for a message digest. 
 	The returned struct crypto_shash is the cipher 
 	handle required for any subsequent API invocation
 	 for that message digest.*/
     alg = crypto_alloc_shash(hash_alg_name, 0, 0);
+    printk("fin qui tutto bene");
     if(IS_ERR(alg)){
         pr_info("can't alloc alg %s\n", hash_alg_name);
         return PTR_ERR(alg);
@@ -36,4 +38,10 @@ static int do_sha256(const unsigned char *data, unsigned char *out_digest)
     crypto_free_shash(alg);
     return 0;
 }
-
+void print_hash(const unsigned char *hash) {
+    int i;
+    for (i = 0; i < SHA256_DIGEST_SIZE; i++) {
+        printk("%02x", hash[i]);
+    }
+    printk("\n");
+}

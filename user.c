@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
     if(argc<4){
     	printf("Insufficient number of parameters passed\n");
     	
-    	printf("try again doing this:\n\t-sudo ./user new_state <STATE> <your password>\n\t-sudo ./user change_pw <new password> <old password>\n\t-sudo ./user add_path <new path> <your password>\n\t-sudo ./user remove_path <path to remove> <your password>\n");
+    	printf("try again doing this:\n\t-sudo ./user new_state <STATE> <your password>\n\t-sudo ./user change_pw <new password> <old password>\n\t-sudo ./user add_path <new path> <your password>\n\t-sudo ./user remove_path <path to remove> <your password>\n\tPLEASE IF YOUR PASSWORD CONTAINS SPECIAL CHARACTERS (e.g. !) INSERT A \\ BEFORE EACH ONE\n");
     	return 1;
     }
 	

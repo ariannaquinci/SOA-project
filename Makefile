@@ -6,3 +6,10 @@ all:
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 
+load:
+	sudo insmod reference_monitor.ko the_file=$(realpath ./singlefile-FS/mount/the-file)
+	sudo mknod /dev/reference_monitor c 237 0
+
+unload:
+	sudo rm -rf /dev/reference_monitor c 237 0
+	sudo rmmod reference_monitor
