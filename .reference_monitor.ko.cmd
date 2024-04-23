@@ -1,1 +1,0 @@
-cmd_/home/arianna/Documents/SOA-project/reference_monitor.ko := ld -r  -m elf_x86_64 -z noexecstack   --build-id=sha1  -T scripts/module.lds -o /home/arianna/Documents/SOA-project/reference_monitor.ko /home/arianna/Documents/SOA-project/reference_monitor.o /home/arianna/Documents/SOA-project/reference_monitor.mod.o;  true
