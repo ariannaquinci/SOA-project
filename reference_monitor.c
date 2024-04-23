@@ -5,7 +5,7 @@
 #include <linux/fs_struct.h>
 #include <linux/mm_types.h>
 
-
+#include "my_crypto.h"
 #include <linux/namei.h>
 #include <linux/cdev.h>
 #include <linux/errno.h>
@@ -67,7 +67,7 @@ typedef enum reference_monitor_state{
 
 typedef struct reference_monitor_info{
 	ref_monitor_state state;
-	char passwd[PASS_LEN]; 
+	char passwd[256]; 
 	char blacklist[MAX_PATHS][MAX_LEN];
 	int pos;
 	spinlock_t spinlock; 
@@ -78,12 +78,30 @@ static RM_info info;
 
 #define LINE_SIZE 256
 
+bool check_passwd(char* pw){
+	unsigned char *pw_digest;
+	pw_digest=kmalloc(256,GFP_KERNEL);
+	memset(pw_digest,0,256);
+	int ret=0;
+	ret=do_sha256(pw, pw_digest);
+	if(ret!=0){
+		printk(KERN_ERR "error in calculating sha256 of the password");
+		return false;
+	}
+	if(strncmp(pw_digest, info.passwd, 256)==0){
+		return true;
+	}else{
+		return false;
+	}
+}
+
 
 int RM_change_pw(char*new){
 	spin_lock(&info.spinlock);
-	if(strlen(new)> PASS_LEN-1){spin_unlock(&info.spinlock); return -1;}
-	strncpy(info.passwd,strcat(new,"\0"), strlen(new)+1);
-	printk("password changed to: %s", info.passwd);
+	if(strlen(new)> PASS_LEN-1){ printk(KERN_ERR "too long password"); spin_unlock(&info.spinlock); return -1;}
+	//strncpy(info.passwd,strcat(new,"\0"), strlen(new)+1);
+	do_sha256(new, info.passwd);
+	
 	spin_unlock(&info.spinlock);
 	return 0;
 }
@@ -735,8 +753,8 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 	}
   	
 	kfree(buffer);
-  	
-	if(strcmp(args[2],info.passwd)==0){
+  	if(check_passwd(args[2])){
+	//if(strcmp(args[2],info.passwd)==0){
 		
 		if(strcmp(args[0],"new_state")==0){
 			if(strcmp(args[1],"ON")==0){
@@ -799,7 +817,8 @@ int init_module(void) {
 	
 	//init info 
 	info.state=OFF;
-	strncpy(info.passwd, "changeme\0", strlen("changeme\0") );
+	do_sha256("changeme\0", info.passwd);
+	//strncpy(info.passwd, "changeme\0", strlen("changeme\0") );
 	strncpy(	info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
 	kp_open.kp.symbol_name = target_func0;
 	ret = register_kretprobe(&kp_open);
