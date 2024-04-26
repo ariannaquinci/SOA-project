@@ -39,6 +39,7 @@
 #define target_func1 "do_mkdirat"
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
+#define RECORD_SIZE 2*sizeof(pid_t)+2*sizeof(uid_t)+MAX_LEN+66
 
 
 #define AUDIT if(1)open
@@ -125,8 +126,8 @@ struct record{
 	pid_t pid;	//thread identifier
 	uid_t current_uid;
 	uid_t current_euid; 
-	char* program_path;
-	char  content_hash[33];
+	char *program_path;
+	char  content_hash[65];
 };
 
 static struct record record;
@@ -175,6 +176,7 @@ ssize_t read_content(char * path, char *buf, size_t buflen) {
 
     ret = kernel_read(filp, buf, buflen, 0);
     if (ret < 0) {
+    	
         printk(KERN_ERR "Failed to read executable file\n");
     }
 
@@ -196,88 +198,70 @@ int retrieve_informations(void){
 	kfree(buf);
 	
 	
-	char buffer[1024*8];
+	char buffer[1024];
 	int res=0;
-	res=read_content(record.program_path, buffer,1024*8 );
+	res=read_content(record.program_path, buffer,1024 );
 	
 	printk("res is %d and program content : %s",res, buffer);
 	
 	//questo va fatto in deferred work
 	printk("buffer lenght is: %d", strlen(buffer));
-	do_sha256(buffer, record.content_hash, strlen(buffer));
+	const  char hash_result[65];
+	do_sha256(buffer, hash_result, strlen(buffer));
+	 hash_to_string(hash_result, record.content_hash);
 	
-	printk("tgid: %d, pid: %d, current_uid: %d, current euid: %d, path: %s",record.tgid, record.pid, record.current_uid, record.current_euid, record.program_path);
-	print_hash(record.content_hash);
-	printk("returned from do_sha256");
+	printk("tgid: %d, pid: %d, current_uid: %d, current euid: %d, path: %s, hash: %s",record.tgid, record.pid, record.current_uid, record.current_euid, record.program_path,record.content_hash);
 	return 0;
 }
 
-bool write_append_only(void){
-	spin_lock(&record.spin);
-	retrieve_informations();
-	char buffer[1024*8];
-	struct file *file;
-	file=filp_open(the_file, O_WRONLY|O_APPEND, 0);
-	if (IS_ERR(file)) {
-		printk(KERN_ERR "Failed to open the_file\n");
-	      
-		return PTR_ERR(file);
-    	}
-    	int ret=0;
-    	
-    	char tgid_str[20]; 
-    	char pid_str[20]; 
-	char uid_str[20]; 
-	char euid_str[20]; 
-	sprintf(tgid_str, "%d", record.tgid);	
-	sprintf(pid_str, "%d", record.pid);
-	sprintf(uid_str, "%d", record.current_uid);
-	sprintf(euid_str, "%d", record.current_euid);
+
+bool concatenate_record_to_buffer(char *buffer) {
+    // Formatta ogni campo della struttura record come stringa e concatenali nel buffer
 	
-    /*	ret = kernel_write(file,tgid_str, strlen(tgid_str),0);
-    	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-        	return PTR_ERR(file);
-    	}
-	ret = kernel_write(file,pid_str, strlen(pid_str),0);
-	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-        	return PTR_ERR(file);
-    	}
-	ret = kernel_write(file,uid_str, strlen(uid_str),0);
-	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-        	return PTR_ERR(file);
-    	}
-	ret = kernel_write(file,euid_str, strlen(euid_str),0);
-	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-        	return PTR_ERR(file);
-    	}
-	ret = kernel_write(file,record.program_path, strlen(record.program_path),0);
-	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-        	return PTR_ERR(file);
-    	}
-	ret = kernel_write(file,record.content_hash, strlen(record.content_hash),0);
-	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-    		return PTR_ERR(file);
-    	}*/
-    	//ret=vfs_write(file, "ciao", strlen("ciao"), &file->f_pos);
-    	/*ret = kernel_write(file,"ciao", strlen("ciao"),&file->f_pos);
-	 if (ret < 0) {
-        	printk(KERN_ERR "Failed to write the file\n");
-    		return PTR_ERR(file);
-    	}*/
-	
-	spin_unlock(&record.spin);
-	return true;
+    if(snprintf(buffer, RECORD_SIZE, "%d %d %d %d %s %s\n",
+             record.tgid, record.pid, record.current_uid, record.current_euid,
+             record.program_path, record.content_hash)>0){
+	return true;}
+	return false;
 }
-			        
 
 
+bool write_append_only(void) {
+    spin_lock(&record.spin);
+    retrieve_informations();
+  
+    
+    char line[RECORD_SIZE];
+    struct file *file;
+    loff_t pos = 0;
+    
+    file = filp_open(the_file, O_WRONLY | O_APPEND, 0);
+    if (IS_ERR(file)) {
+        printk(KERN_ERR "Failed to open the_file\n");
+        spin_unlock(&record.spin);
+        return false;
+    }
 
+    int ret = 0;
+    if(concatenate_record_to_buffer(line)){
+	    printk("Line to write is: %s", line);
+	    printk("strlen is: %d", strlen(line));
+	   ret = kernel_write(file,line, strlen(line),0);
+	  printk("returned from write_iter: %d", ret); 
+	    if (ret < strlen(line)) {
+	    	printk("wrote only %d bytes", ret);
+		printk(KERN_ERR "Failed to write the file\n");
+		filp_close(file, NULL);
+		spin_unlock(&record.spin);
+		return false;
+	    }
+
+    }
+    filp_close(file, NULL);
+    spin_unlock(&record.spin);
+    return true;
+}
+		
 char *get_cwd(void){
 	
 	struct path abs_path;
@@ -483,8 +467,11 @@ switch(info.state){
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			      
 			        //calling the function that permits to write to the append-only file
-			        write_append_only();
 			        
+			        if(!write_append_only()){
+			        	printk("Impossible to append content to the file");
+			        	return -1;
+			        }
 			      	struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -552,7 +539,10 @@ switch(info.state){
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			         //calling the function that permits to write to the append-only file
-			        write_append_only();
+			        if(!write_append_only()){
+			        	printk("Impossible to append content to the file");
+			        	return -1;
+			        }
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -619,7 +609,11 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			         //calling the function that permits to write to the append-only file
-			        write_append_only();
+			       
+			        if(! write_append_only()){
+			        	printk("Impossible to write append only");
+			        	return -1;
+			        }
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -736,7 +730,10 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				        //calling the function that permits to write to the append-only file
-			       	 write_append_only();
+			       	 if(!write_append_only()){
+			        	printk("Impossible to append content to the file");
+			        	return -1;
+			        }
 				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
 				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
 				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
@@ -761,7 +758,10 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				         //calling the function that permits to write to the append-only file
-			        write_append_only();
+			       if(!write_append_only()){
+			        	printk("Impossible to append content to the file");
+			        	return -1;
+			        }
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;

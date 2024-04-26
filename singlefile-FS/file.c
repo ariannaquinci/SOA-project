@@ -8,8 +8,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 
-
-
+#include <linux/uio.h>
 #include "singlefilefs.h"
 
 
@@ -81,6 +80,7 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 	}
 
 
+	
 	//this work is done if the inode was not already cached
 	inode_init_owner(current->cred->user_ns, the_inode, NULL, S_IFREG );
 	the_inode->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IXUSR | S_IXGRP | S_IXOTH;
@@ -112,35 +112,92 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
     return NULL;
 
 }
-//added write operation
-ssize_t onefilefs_write(struct file *filp, const char __user *buf, size_t len, loff_t * pos) {
-  printk("writing into the file");
-    struct inode *inode = filp->f_inode;
-    struct buffer_head *bh;
-    ssize_t ret;
-  
-    // Sposta l'offset alla fine del file
-    *pos = inode->i_size;
 
-    // Calcola il numero del blocco da scrivere
-    int block_to_write = (*pos / DEFAULT_BLOCK_SIZE) + 2; // Il valore 2 tiene conto del superblock e del blocco dell'inode del file sul dispositivo
+/*
 
-    // Leggi il blocco del file dal dispositivo
-    bh = sb_bread(inode->i_sb, block_to_write);
-    if (!bh)
-        return -EIO;
+ssize_t onefilefs_write(struct kiocb *k, struct iov_iter *i) {
+	printk("writing into the file");
 
-    // Scrivi i dati alla fine del blocco
-    ret = simple_write_to_buffer(buf, len, &inode->i_size, bh->b_data, DEFAULT_BLOCK_SIZE);
+	struct file *filp = k->ki_filp;
+	struct inode *inode = filp->f_inode;
+	struct buffer_head *bh;
+	char *buf= i->kvec->iov_base;
+    	size_t len = i->kvec->iov_len;
+	
+	printk("len is: %d", len);
+	printk("buf is: %s", buf);
+	// Posiziona l'offset di scrittura alla fine del file
+	k->ki_pos = i_size_read(inode);
 
-    // Marchia il buffer del blocco come "sporco" e sincronizza il buffer con il dispositivo
-    mark_buffer_dirty(bh);
-    sync_dirty_buffer(bh);
-    brelse(bh);
+	// Calcola il numero del blocco da scrivere
+	int block_to_write = (k->ki_pos / DEFAULT_BLOCK_SIZE) + 2; // Considera superblock e inode del file sul dispositivo
 
-    return ret;
+	// Leggi il blocco del file dal dispositivo
+	bh = sb_bread(inode->i_sb, block_to_write);
+	if (!bh)
+		return -EIO;
+
+	printk("read ok");
+	if(!memcpy(bh->b_data + k->ki_pos, buf, len)){
+		printk(KERN_ERR "error in memcpy"); 
+	}
+	
+	printk("memcpy ok");
+
+
+	// Segna il buffer del blocco come "sporco" e sincronizzalo con il dispositivo
+	mark_buffer_dirty(bh);
+	sync_dirty_buffer(bh);
+	brelse(bh);
+
+	return len;
 }
 
+*/
+
+ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
+    
+    loff_t off;
+    struct file *filp = kiocb->ki_filp;
+    char *buf= iter->kvec->iov_base;
+    size_t len = iter->kvec->iov_len;
+ 
+    int block_to_read;//index of the block to be read from device
+    loff_t offset;
+    struct buffer_head *bh = NULL;
+    struct inode * inode = filp->f_inode;
+    i_size_write(inode, inode->i_size);
+    
+    
+    off = i_size_read(inode); //writing in append mode ONLY
+
+    //determine the block level offset for the operation
+    offset = off % DEFAULT_BLOCK_SIZE; 
+    //just read stuff in a single block - residuals will be managed at the applicatin level
+    
+    if (offset + len > DEFAULT_BLOCK_SIZE)
+        len = DEFAULT_BLOCK_SIZE - offset;
+
+    //compute the actual index of the the block to be read from device
+    block_to_read = off / DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device
+    
+
+    bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
+    if(!bh){
+	return -EIO;
+    }
+    printk("len is %d and buf lenght is %d", len, strlen(buf)); 
+    memcpy(bh->b_data + offset, buf, len);
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    off += len;
+    
+    inode->i_size = off; 
+    i_size_write(inode, off);
+    brelse(bh);
+  
+    return len;
+}
 
 //look up goes in the inode operations
 const struct inode_operations onefilefs_inode_ops = {
@@ -150,5 +207,5 @@ const struct inode_operations onefilefs_inode_ops = {
 const struct file_operations onefilefs_file_operations = {
     .owner = THIS_MODULE,
     .read = onefilefs_read,
-    .write = onefilefs_write 
+    .write_iter = onefilefs_write //please implement this function to complete the exercise
 };

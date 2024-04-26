@@ -11,7 +11,13 @@ static int calc_hash(struct crypto_shash *alg, const unsigned char *data, unsign
 	ret = crypto_shash_digest(&shash, data, datalen, digest);
 	return ret;
 }
-
+void hash_to_string(const unsigned char *hash, char *output) {
+    int i;
+    for (i = 0; i < 33; i++) {
+        sprintf(output + (i * 2), "%02x", hash[i]);
+    }
+    output[33 * 2] = '\0';
+}
 static int do_sha256(const unsigned char *data, unsigned char *out_digest, size_t datalen){
 	printk("into do_sha256");
     struct crypto_shash *alg;
