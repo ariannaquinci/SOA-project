@@ -113,48 +113,6 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 
 }
 
-/*
-
-ssize_t onefilefs_write(struct kiocb *k, struct iov_iter *i) {
-	printk("writing into the file");
-
-	struct file *filp = k->ki_filp;
-	struct inode *inode = filp->f_inode;
-	struct buffer_head *bh;
-	char *buf= i->kvec->iov_base;
-    	size_t len = i->kvec->iov_len;
-	
-	printk("len is: %d", len);
-	printk("buf is: %s", buf);
-	// Posiziona l'offset di scrittura alla fine del file
-	k->ki_pos = i_size_read(inode);
-
-	// Calcola il numero del blocco da scrivere
-	int block_to_write = (k->ki_pos / DEFAULT_BLOCK_SIZE) + 2; // Considera superblock e inode del file sul dispositivo
-
-	// Leggi il blocco del file dal dispositivo
-	bh = sb_bread(inode->i_sb, block_to_write);
-	if (!bh)
-		return -EIO;
-
-	printk("read ok");
-	if(!memcpy(bh->b_data + k->ki_pos, buf, len)){
-		printk(KERN_ERR "error in memcpy"); 
-	}
-	
-	printk("memcpy ok");
-
-
-	// Segna il buffer del blocco come "sporco" e sincronizzalo con il dispositivo
-	mark_buffer_dirty(bh);
-	sync_dirty_buffer(bh);
-	brelse(bh);
-
-	return len;
-}
-
-*/
-
 ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
     
     loff_t off;
@@ -169,7 +127,7 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
     i_size_write(inode, inode->i_size);
     
     
-    off = i_size_read(inode); //writing in append mode ONLY
+    off = i_size_read(inode); 
 
     //determine the block level offset for the operation
     offset = off % DEFAULT_BLOCK_SIZE; 

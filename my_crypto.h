@@ -16,7 +16,7 @@ void hash_to_string(const unsigned char *hash, char *output) {
     for (i = 0; i < 33; i++) {
         sprintf(output + (i * 2), "%02x", hash[i]);
     }
-    output[33 * 2] = '\0';
+    output[32 * 2+1] = '\0';
 }
 static int do_sha256(const unsigned char *data, unsigned char *out_digest, size_t datalen){
 	printk("into do_sha256");

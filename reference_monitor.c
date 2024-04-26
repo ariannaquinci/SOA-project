@@ -198,9 +198,9 @@ int retrieve_informations(void){
 	kfree(buf);
 	
 	
-	char buffer[1024];
+	char buffer[4096];
 	int res=0;
-	res=read_content(record.program_path, buffer,1024 );
+	res=read_content(record.program_path, buffer,4096 );
 	
 	printk("res is %d and program content : %s",res, buffer);
 	
@@ -517,7 +517,7 @@ switch(info.state){
 			break;
 		case(ON):
 		case(REC_ON):
-		
+		printk("Into rmdir wrapper");
 				memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
@@ -536,6 +536,7 @@ switch(info.state){
 			 char *directory = abs_path;
         		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
         		
+			printk("Into rmdir wrapper; path is: %s", directory);
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			         //calling the function that permits to write to the append-only file
@@ -543,9 +544,11 @@ switch(info.state){
 			        	printk("Impossible to append content to the file");
 			        	return -1;
 			        }
+			        
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
+			        regs->di=NULL;
 			        break;
 			    }
 			    // Get the parent directory
@@ -940,6 +943,7 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 			}
 		}
 		if(strcmp(args[0],"change_pw")==0){
+			printk("arg is change password");
 			RM_change_pw(args[1]);
 		}
 		if (strcmp(args[0],"add_path")==0){
