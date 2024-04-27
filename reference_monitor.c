@@ -41,7 +41,7 @@
 #define target_func3 "do_unlinkat"
 #define RECORD_SIZE 2*sizeof(pid_t)+2*sizeof(uid_t)+MAX_LEN+66
 
-
+#define MAX_BUFFER_SIZE 66
 #define AUDIT if(1)open
 
 MODULE_LICENSE("GPL");
@@ -54,9 +54,15 @@ MODULE_DESCRIPTION("see the README file");
 #define MAX_PATHS 128
 #define PASS_LEN 20
 #define MAX_PARENTS 10
-static ssize_t RM_write(struct file *, const char *, size_t, loff_t *);
+
+#define LINE_SIZE 256
 
 #define DEVICE_NAME "/dev/reference_monitor"  /* Device file name in /dev/ */
+
+#define BUFFER_SIZE (16 * 1024) // 16 KB
+
+static ssize_t RM_write(struct file *, const char *, size_t, loff_t *);
+
 
 static int Major;            /* Major number assigned to reference monitor device driver */
 
@@ -86,8 +92,6 @@ size_t my_min(size_t a , size_t b){
 	}
 	return a;
 }
-#define LINE_SIZE 256
-
 
 
 bool check_passwd(char* pw){
@@ -126,8 +130,9 @@ struct record{
 	pid_t pid;	//thread identifier
 	uid_t current_uid;
 	uid_t current_euid; 
-	char *program_path;
-	char  content_hash[65];
+	char program_path[MAX_LEN];
+	char content_hash[MAX_BUFFER_SIZE];
+	
 };
 
 static struct record record;
@@ -160,7 +165,6 @@ out:
     return result;
 }
 
-#define INITIAL_BUFFER_SIZE (8 * 1024) // 8 KB
 
 ssize_t read_content(char * path, char *buf, size_t buflen) {
     struct file *filp;
@@ -186,64 +190,36 @@ ssize_t read_content(char * path, char *buf, size_t buflen) {
 }
 
 
-int retrieve_informations(void){
-	struct cred *cred=get_task_cred(current);
-	
-	record.tgid=current->tgid;
-	record.pid=current->pid;
-	record.current_uid = cred->uid.val;
-	record.current_euid = cred->euid.val;
-	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
-	record.program_path=get_current_proc_path(buf, MAX_LEN);
-	kfree(buf);
-	
-	
-	char buffer[4096];
-	int res=0;
-	res=read_content(record.program_path, buffer,4096 );
-	
-	printk("res is %d and program content : %s",res, buffer);
-	
-	//questo va fatto in deferred work
-	printk("buffer lenght is: %d", strlen(buffer));
-	const  char hash_result[65];
-	do_sha256(buffer, hash_result, strlen(buffer));
-	 hash_to_string(hash_result, record.content_hash);
-	
-	printk("tgid: %d, pid: %d, current_uid: %d, current euid: %d, path: %s, hash: %s",record.tgid, record.pid, record.current_uid, record.current_euid, record.program_path,record.content_hash);
-	return 0;
-}
+typedef struct {
+    struct work_struct work;
+    struct record deferred_record;
+} deferred_work_data;
 
 
-bool concatenate_record_to_buffer(char *buffer) {
+bool concatenate_record_to_buffer(deferred_work_data *data, char *buffer) {
     // Formatta ogni campo della struttura record come stringa e concatenali nel buffer
 	
     if(snprintf(buffer, RECORD_SIZE, "%d %d %d %d %s %s\n",
-             record.tgid, record.pid, record.current_uid, record.current_euid,
-             record.program_path, record.content_hash)>0){
+             data->deferred_record.tgid, data->deferred_record.pid, data->deferred_record.current_uid, data->deferred_record.current_euid,
+             data->deferred_record.program_path,data->deferred_record.content_hash)>0){
 	return true;}
 	return false;
 }
+bool write_append_only(char* line) {
+   
 
-
-bool write_append_only(void) {
-    spin_lock(&record.spin);
-    retrieve_informations();
-  
     
-    char line[RECORD_SIZE];
+    int ret = 0;
     struct file *file;
-    loff_t pos = 0;
+ 
     
     file = filp_open(the_file, O_WRONLY | O_APPEND, 0);
     if (IS_ERR(file)) {
         printk(KERN_ERR "Failed to open the_file\n");
-        spin_unlock(&record.spin);
+        
         return false;
     }
 
-    int ret = 0;
-    if(concatenate_record_to_buffer(line)){
 	    printk("Line to write is: %s", line);
 	    printk("strlen is: %d", strlen(line));
 	   ret = kernel_write(file,line, strlen(line),0);
@@ -256,11 +232,84 @@ bool write_append_only(void) {
 		return false;
 	    }
 
-    }
+    
     filp_close(file, NULL);
-    spin_unlock(&record.spin);
+  
     return true;
 }
+void do_deferred_work(struct work_struct *work) {
+    deferred_work_data *data = container_of(work, deferred_work_data, work);
+    char hash_result[66];
+    
+    char buffer[4096];
+    char line[RECORD_SIZE];
+    int res = 0;
+   printk("do_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  
+   data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path); 
+    res = read_content(data->deferred_record.program_path, buffer, 4096);
+    if (res < 0) {
+        printk(KERN_ERR "Impossible to read content");
+        return;
+    }
+    // Esegui il calcolo dell'hash
+    do_sha256(buffer, hash_result, 4096);
+    hash_to_string(hash_result, data->deferred_record.content_hash);
+    //scrivo su file
+    if (concatenate_record_to_buffer(data, line)) {
+        write_append_only(line);
+        printk("res is %d and program content : %s", res, buffer);
+        return;
+    }
+    printk(KERN_ERR "Impossible to complete deferred work!!");
+}
+
+void schedule_deferred_work(struct record *record) {
+    deferred_work_data *data;
+
+    // Alloca memoria per i dati in maniera non bloccante
+    data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
+    if (!data) {
+        printk(KERN_ERR "Failed to allocate memory for deferred work\n");
+        return;
+    }
+
+    // Copia il contenuto della struttura record originale nella nuova struttura
+    memcpy(&(data->deferred_record), record, sizeof(struct record));
+    printk("schedule_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path);
+   
+    // Inizializza il lavoro differito
+    INIT_WORK(&(data->work), do_deferred_work);
+
+    // Pianifica il lavoro differito per l'esecuzione
+    schedule_work(&(data->work));
+}
+
+
+int retrieve_informations(void){
+	
+	struct cred *cred=get_task_cred(current);
+	
+	record.tgid=current->tgid;
+	record.pid=current->pid;
+	record.current_uid = cred->uid.val;
+	record.current_euid = cred->euid.val;
+	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
+	memcpy(record.program_path, get_current_proc_path(buf, MAX_LEN), MAX_LEN);
+	kfree(buf);
+	
+	
+	//questo va fatto in deferred work
+	const  char hash_result[66];
+	schedule_deferred_work(&record);
+
+	
+	
+	return 0;
+}
+
+
+
+
 		
 char *get_cwd(void){
 	
@@ -466,12 +515,8 @@ switch(info.state){
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			      
-			        //calling the function that permits to write to the append-only file
-			        
-			        if(!write_append_only()){
-			        	printk("Impossible to append content to the file");
-			        	return -1;
-			        }
+    				retrieve_informations();
+			       
 			      	struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -539,11 +584,7 @@ switch(info.state){
 			printk("Into rmdir wrapper; path is: %s", directory);
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			         //calling the function that permits to write to the append-only file
-			        if(!write_append_only()){
-			        	printk("Impossible to append content to the file");
-			        	return -1;
-			        }
+			        retrieve_informations();
 			        
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
@@ -613,10 +654,7 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			         //calling the function that permits to write to the append-only file
 			       
-			        if(! write_append_only()){
-			        	printk("Impossible to write append only");
-			        	return -1;
-			        }
+			      retrieve_informations();
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -733,10 +771,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				        //calling the function that permits to write to the append-only file
-			       	 if(!write_append_only()){
-			        	printk("Impossible to append content to the file");
-			        	return -1;
-			        }
+			       	retrieve_informations();
 				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
 				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
 				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
@@ -761,10 +796,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				         //calling the function that permits to write to the append-only file
-			       if(!write_append_only()){
-			        	printk("Impossible to append content to the file");
-			        	return -1;
-			        }
+			       retrieve_informations();
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;

@@ -36,7 +36,7 @@ static int do_sha256(const unsigned char *data, unsigned char *out_digest, size_
     }
     calc_hash(alg, data, datalen, out_digest);
 
-    // Very dirty print of 8 first bytes for comparaison with sha256sum
+   
     printk(KERN_INFO "HASH(%s, %i): %02x%02x%02x%02x%02x%02x%02x%02x\n",
           data, datalen, out_digest[0], out_digest[1], out_digest[2], out_digest[3], out_digest[4], 
           out_digest[5], out_digest[6], out_digest[7]);
