@@ -764,8 +764,14 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 			char *directory;
 			abs_path=get_absolute_path_by_name(name);
 			if(open_mode & O_CREAT && abs_path==NULL){
-				
+				char* path;
 				directory=get_cwd();
+				//if file doesn't exist yet I take its parent directory and retrieve the absolute path
+				path=custom_dirname(name);
+				
+				directory=get_absolute_path_by_name(path);
+				if(directory==NULL){
+				directory=get_cwd();}
 				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
                 		
 				   if (checkBlacklist(directory) == -EPERM ) {
