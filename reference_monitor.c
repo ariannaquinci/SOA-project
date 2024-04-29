@@ -151,7 +151,7 @@ bool concatenate_record_to_buffer(deferred_work_data *data, char *buffer) {
 bool write_append_only(char* line) {
    printk("write append only");
 
-    
+    loff_t pos=0;
     int ret = 0;
     struct file *file;
  
@@ -163,9 +163,9 @@ bool write_append_only(char* line) {
         return false;
     }
 
-	    printk("Line to write is: %s", line);
+	   
 	    printk("strlen is: %d", strlen(line));
-	   ret = kernel_write(file,line, strlen(line),0);
+	   ret = kernel_write(file,line, strlen(line),&pos);
 	  printk("returned from write_iter: %d", ret); 
 	    if (ret < strlen(line)) {
 	    	printk("wrote only %d bytes", ret);
@@ -175,7 +175,7 @@ bool write_append_only(char* line) {
 		return false;
 	    }
 
-    
+    printk("\n%s: File \"the_file\" written with line: %s\n", MODNAME,line );
     filp_close(file, NULL);
   
     return true;
@@ -199,11 +199,10 @@ void do_deferred_work(struct work_struct *work) {
     hash_to_string(hash_result, data->deferred_record.content_hash);
     //scrivo su file
     if (concatenate_record_to_buffer(data, line)) {
-        write_append_only(line);
-        printk("res is %d and program content : %s", res, buffer);
+        if(!write_append_only(line)){printk(KERN_ERR "impossible to write append only");}
+       
         return;
     }
-    printk(KERN_ERR "Impossible to complete deferred work!!");
 }
 
 /*

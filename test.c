@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <pthread.h>
 
-#define NUM_THREADS 5
-#define FILE_NAME "/home/arianna/try/example.txt"
+#define NUM_THREADS 30
+#define FILE_NAME "/home/arianna/try/example"
 
 int open_attempts = 0;
 
@@ -10,7 +10,9 @@ void *open_file(void *thread_id) {
     int id = *(int *)thread_id;
     FILE *file;
     open_attempts++;
-    file = fopen(FILE_NAME, "w+");
+    char name[100];
+    sprintf(name,"/home/arianna/try/example/%d", id); 
+    file = fopen(name, "w+");
     if (file == NULL) {
         printf("Thread %d failed to open file.\n", id);
     } else {
