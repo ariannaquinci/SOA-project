@@ -1,10 +1,9 @@
 #include <stdio.h>
 #include <pthread.h>
 
-#define NUM_THREADS 30
+#define NUM_THREADS 5
 #define FILE_NAME "/home/arianna/try/example.txt"
 
-pthread_mutex_t mutex;
 int open_attempts = 0;
 
 void *open_file(void *thread_id) {
@@ -15,7 +14,8 @@ void *open_file(void *thread_id) {
     if (file == NULL) {
         printf("Thread %d failed to open file.\n", id);
     } else {
-        printf("Thread %d successfully opened file.\n", id);
+        fprintf(file, "Thread %d successfully opened file.\n", id);
+        
         fclose(file);
     }
     pthread_exit(NULL);

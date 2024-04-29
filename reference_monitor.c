@@ -25,7 +25,7 @@
 #include <asm/page.h>
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
-#include <linux/syscalls.h>
+#include <linux/syscalls.h> i
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/spinlock.h>
@@ -89,6 +89,7 @@ static RM_info info;
 
 bool check_passwd(char* pw){
 	printk("checking pw");
+	spin_lock(&info.spinlock);
 	unsigned char *pw_digest;
 	pw_digest=kmalloc(33,GFP_KERNEL);
 	memset(pw_digest,0,33);
@@ -97,11 +98,13 @@ bool check_passwd(char* pw){
 	ret=do_sha256(pw, pw_digest,strlen(pw));
 	if(ret!=0){
 		printk(KERN_ERR "error in calculating sha256 of the password");
+		spin_unlock(&info.spinlock);
 		return false;
 	}
 	if(strncmp(pw_digest, info.passwd, my_min(pw_digest, strlen(info.passwd)))==0){
+	spin_unlock(&info.spinlock);
 		return true;
-	}else{
+	}else{spin_unlock(&info.spinlock);
 		return false;
 	}
 }
@@ -118,7 +121,7 @@ int RM_change_pw(char *new){
 	return 0;
 }
 struct record{
-	spinlock_t spin; 
+	
 	pid_t tgid;	//group identifier
 	pid_t pid;	//thread identifier
 	uid_t current_uid;
@@ -127,8 +130,6 @@ struct record{
 	char content_hash[MAX_BUFFER_SIZE];
 	
 };
-
-static struct record record;
 
 
 
@@ -148,7 +149,7 @@ bool concatenate_record_to_buffer(deferred_work_data *data, char *buffer) {
 	return false;
 }
 bool write_append_only(char* line) {
-   
+   printk("write append only");
 
     
     int ret = 0;
@@ -170,7 +171,7 @@ bool write_append_only(char* line) {
 	    	printk("wrote only %d bytes", ret);
 		printk(KERN_ERR "Failed to write the file\n");
 		filp_close(file, NULL);
-		spin_unlock(&record.spin);
+		
 		return false;
 	    }
 
@@ -205,7 +206,35 @@ void do_deferred_work(struct work_struct *work) {
     printk(KERN_ERR "Impossible to complete deferred work!!");
 }
 
-void schedule_deferred_work(struct record *record) {
+/*
+int retrieve_informations(void){
+	
+	struct cred *cred=get_task_cred(current);
+	spin_lock(record.spin);
+	record.tgid=current->tgid;
+	record.pid=current->pid;
+	record.current_uid = cred->uid.val;
+	record.current_euid = cred->euid.val;
+	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
+	char * path=get_current_proc_path(buf, MAX_LEN);
+	if(path==NULL || path==-ENOENT){
+	kfree(buf);
+	return -1;
+	}
+	memcpy(record.program_path, path, MAX_LEN);
+	kfree(buf);
+	
+	
+	//questo va fatto in deferred work
+	//const  char hash_result[66];
+	//schedule_deferred_work(&record);
+
+	
+	
+	return 0;
+}*/
+
+void schedule_deferred_work(void) {
     deferred_work_data *data;
 
     // Alloca memoria per i dati in maniera non bloccante
@@ -214,40 +243,38 @@ void schedule_deferred_work(struct record *record) {
         printk(KERN_ERR "Failed to allocate memory for deferred work\n");
         return;
     }
-
+    	struct cred *cred=get_task_cred(current);
+	
+	struct record record;
+	record.tgid=current->tgid;
+	record.pid=current->pid;
+	record.current_uid = cred->uid.val;
+	record.current_euid = cred->euid.val;
+	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
+	char * path=get_current_proc_path(buf, MAX_LEN);
+	if(path==NULL || path==-ENOENT){
+	kfree(buf);
+	return ;
+	}
+	memcpy(record.program_path, path, MAX_LEN);
+	kfree(buf);
+	
+  
+ //  if ( retrieve_informations() <0){printk("error in retrieving info"); kfree(data); spin_unlock(&record.spin);}
+	
     // Copia il contenuto della struttura record originale nella nuova struttura
-    memcpy(&(data->deferred_record), record, sizeof(struct record));
+    memcpy(&(data->deferred_record), &record, RECORD_SIZE);
+   
     printk("schedule_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path);
    
     // Inizializza il lavoro differito
     INIT_WORK(&(data->work), do_deferred_work);
 
     // Pianifica il lavoro differito per l'esecuzione
-    schedule_work(&(data->work));
+ schedule_work(&(data->work));
+   // kfree(data);
 }
 
-
-int retrieve_informations(void){
-	
-	struct cred *cred=get_task_cred(current);
-	
-	record.tgid=current->tgid;
-	record.pid=current->pid;
-	record.current_uid = cred->uid.val;
-	record.current_euid = cred->euid.val;
-	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
-	memcpy(record.program_path, get_current_proc_path(buf, MAX_LEN), MAX_LEN);
-	kfree(buf);
-	
-	
-	//questo va fatto in deferred work
-	const  char hash_result[66];
-	schedule_deferred_work(&record);
-
-	
-	
-	return 0;
-}
 
 
 int RM_add_path(char *new_path){
@@ -328,7 +355,7 @@ int RM_remove_path(char * path){
 
 int checkBlacklist(char* open_path){
 	//checking blacklist
-	
+	spin_lock(&info.spinlock);
 	if (open_path==NULL){
 	
 		return -1;
@@ -337,10 +364,11 @@ int checkBlacklist(char* open_path){
 	int i;
 	for(i=1; i<=info.pos; i++){
 		if(strcmp(info.blacklist[i], open_path)==0){
+			spin_unlock(&info.spinlock);
 			return -EPERM;
 		}
 	}
-	
+	spin_unlock(&info.spinlock);
 	return 0;
 }
 struct my_data{
@@ -380,7 +408,8 @@ switch(info.state){
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			      
-    				retrieve_informations();
+    				//retrieve_informations();
+    				schedule_deferred_work();
 			       
 			      	struct my_data *data;
 			        data = (struct my_data *)ri->data;
@@ -449,8 +478,8 @@ switch(info.state){
 			printk("Into rmdir wrapper; path is: %s", directory);
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			        retrieve_informations();
-			        
+			   //     retrieve_informations();
+			     schedule_deferred_work();   
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -519,7 +548,8 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			         //calling the function that permits to write to the append-only file
 			       
-			      retrieve_informations();
+			     // retrieve_informations();
+			     schedule_deferred_work();
 			        struct my_data *data;
 			        data = (struct my_data *)ri->data;
 			        data->dfd = regs->di;
@@ -603,6 +633,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 			break;
 		case(ON):
 		case(REC_ON):
+			
 			memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
@@ -634,15 +665,16 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				//if file doesn't exist yet I take its parent directory and retrieve the absolute path
 				path=custom_dirname(name);
 				
-				directory=get_absolute_path_by_name(path);
-				if(directory==NULL){
-				directory=get_cwd();}
+				path=get_absolute_path_by_name(path);
+				if(path!=NULL){
+					directory=path;}
 				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
                 		
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				        //calling the function that permits to write to the append-only file
-			       	retrieve_informations();
+			       	//retrieve_informations();
+				        schedule_deferred_work();
 				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
 				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
 				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
@@ -667,7 +699,8 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				         //calling the function that permits to write to the append-only file
-			       retrieve_informations();
+			 //      retrieve_informations();
+			schedule_deferred_work();
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;
