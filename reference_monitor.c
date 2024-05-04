@@ -232,8 +232,33 @@ void schedule_deferred_work(void) {
     data->deferred_record.current_uid = cred->uid.val;
     data->deferred_record.current_euid = cred->euid.val;
     char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
+    if(!buf){
+    	printk("Impossible to allocate space for buf");
+    	return;
+    }
     char path[MAX_LEN];
-    strncpy(path, get_current_proc_path(buf, MAX_LEN), MAX_LEN);
+  
+char *result = get_current_proc_path(path, MAX_LEN);
+
+if (IS_ERR(result)) {
+    if (PTR_ERR(result) == -ENOENT) {
+        // Il percorso non è disponibile, gestisci di conseguenza
+        printk(KERN_ERR "Path not available\n");
+    } else {
+        // Errore generico, gestisci di conseguenza
+        printk(KERN_ERR "Error retrieving process path: %ld\n", PTR_ERR(result));
+    }
+    kfree(data); // Libera la memoria allocata per i dati
+    destroy_workqueue(queue); // Libera la coda di lavoro
+    return;
+}
+
+// Il percorso è stato ottenuto correttamente, procedi con l'utilizzo
+
+   
+   
+   strncpy(path,get_current_proc_path(buf, MAX_LEN), MAX_LEN);
+    
 
     if (path == NULL || path == -ENOENT) {
         kfree(buf);
@@ -260,49 +285,6 @@ void schedule_deferred_work(void) {
     // poiché i dati non sono più necessari dopo l'accodamento
     kfree(data);
 }
-
-/*
-void schedule_deferred_work(void) {
-   deferred_work_data *data;
-	
-    // Alloca memoria per i dati in maniera non bloccante
-    data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
-    if (!data) {
-        printk(KERN_ERR "Failed to allocate memory for deferred work\n");
-        return;
-    }
-    	struct cred *cred=get_task_cred(current);
-	
-	struct record record;
-	record.tgid=current->tgid;
-	record.pid=current->pid;
-	record.current_uid = cred->uid.val;
-	record.current_euid = cred->euid.val;
-	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
-	char * path=get_current_proc_path(buf, MAX_LEN);
-	if(path==NULL || path==-ENOENT){
-	kfree(buf);
-	return ;
-	}
-	memcpy(record.program_path, path, MAX_LEN);
-	kfree(buf);
-	
-  
- //  if ( retrieve_informations() <0){printk("error in retrieving info"); kfree(data); spin_unlock(&record.spin);}
-	
-    // Copia il contenuto della struttura record originale nella nuova struttura
-    memcpy(&(data->deferred_record), &record, RECORD_SIZE);
-   
-    printk("schedule_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path);
-   
-    // Inizializza il lavoro differito
-    INIT_WORK(&(data->work), do_deferred_work);
-
-    // Pianifica il lavoro differito per l'esecuzione
- schedule_work(&(data->work));
-   // kfree(data);
-}
-
 
 void schedule_deferred_work(void) {
 	struct workqueue_struct *queue=create_singlethread_workqueue("recording_queue");
