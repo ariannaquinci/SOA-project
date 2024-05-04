@@ -205,37 +205,66 @@ void do_deferred_work(struct work_struct *work) {
     }
 }
 
-/*
-int retrieve_informations(void){
-	
-	struct cred *cred=get_task_cred(current);
-	spin_lock(record.spin);
-	record.tgid=current->tgid;
-	record.pid=current->pid;
-	record.current_uid = cred->uid.val;
-	record.current_euid = cred->euid.val;
-	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
-	char * path=get_current_proc_path(buf, MAX_LEN);
-	if(path==NULL || path==-ENOENT){
-	kfree(buf);
-	return -1;
-	}
-	memcpy(record.program_path, path, MAX_LEN);
-	kfree(buf);
-	
-	
-	//questo va fatto in deferred work
-	//const  char hash_result[66];
-	//schedule_deferred_work(&record);
-
-	
-	
-	return 0;
-}*/
 
 void schedule_deferred_work(void) {
+    struct workqueue_struct *queue;
     deferred_work_data *data;
 
+    // Crea la coda di lavoro
+    queue = create_singlethread_workqueue("recording_queue");
+    if (!queue) {
+        printk(KERN_ERR "Failed to create work queue\n");
+        return;
+    }
+
+    // Alloca memoria per i dati
+    data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
+    if (!data) {
+        printk(KERN_ERR "Failed to allocate memory for deferred work\n");
+        destroy_workqueue(queue); // Libera la coda di lavoro
+        return;
+    }
+
+    struct cred *cred = get_task_cred(current);
+
+    data->deferred_record.tgid = current->tgid;
+    data->deferred_record.pid = current->pid;
+    data->deferred_record.current_uid = cred->uid.val;
+    data->deferred_record.current_euid = cred->euid.val;
+    char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
+    char path[MAX_LEN];
+    strncpy(path, get_current_proc_path(buf, MAX_LEN), MAX_LEN);
+
+    if (path == NULL || path == -ENOENT) {
+        kfree(buf);
+        kfree(data); // Libera la memoria allocata per i dati
+        destroy_workqueue(queue); // Libera la coda di lavoro
+        return;
+    }
+
+    strncpy(data->deferred_record.program_path, path, MAX_LEN);
+    kfree(buf);
+
+    printk("schedule_deferred_work: pid %d, tgid %d, uid %d, euid %d, path %s\n",
+           data->deferred_record.pid, data->deferred_record.tgid,
+           data->deferred_record.current_uid, data->deferred_record.current_euid,
+           data->deferred_record.program_path);
+
+    // Inizializza il lavoro differito
+    INIT_WORK(&(data->work), do_deferred_work);
+
+    // Accoda il lavoro alla coda di lavoro
+    queue_work(queue, &(data->work));
+
+    // Libera la memoria allocata per i dati dopo che il lavoro è stato accodato
+    // poiché i dati non sono più necessari dopo l'accodamento
+    kfree(data);
+}
+
+/*
+void schedule_deferred_work(void) {
+   deferred_work_data *data;
+	
     // Alloca memoria per i dati in maniera non bloccante
     data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
     if (!data) {
@@ -275,7 +304,48 @@ void schedule_deferred_work(void) {
 }
 
 
+void schedule_deferred_work(void) {
+	struct workqueue_struct *queue=create_singlethread_workqueue("recording_queue");
+	deferred_work_data *data;
 
+	// Alloca memoria per i dati in maniera non bloccante
+	data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
+	if (!data) {
+	printk(KERN_ERR "Failed to allocate memory for deferred work\n");
+	return;
+	}
+	struct cred *cred=get_task_cred(current);
+
+
+	data->deferred_record.tgid=current->tgid;
+	data->deferred_record.pid=current->pid;
+	data->deferred_record.current_uid = cred->uid.val;
+	data->deferred_record.current_euid = cred->euid.val;
+	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
+	char path[MAX_LEN];
+	strncpy(path, get_current_proc_path(buf, MAX_LEN), MAX_LEN);
+
+	if(path==NULL || path==-ENOENT){
+	kfree(buf);
+	return ;
+	}
+
+	strncpy(data->deferred_record.program_path,path, MAX_LEN);
+	kfree(buf);
+
+
+
+	printk("schedule_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path);
+
+	// Inizializza il lavoro differito
+
+	INIT_WORK(&(data->work), do_deferred_work);
+
+	queue_work(queue,&(data->work));
+	kfree(data);
+}
+
+*/
 int RM_add_path(char *new_path){
 	spin_lock(&info.spinlock);
 	//check if status is reconfigurable, otherwise exit without applying changes
