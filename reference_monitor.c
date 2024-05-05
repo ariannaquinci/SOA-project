@@ -393,7 +393,9 @@ switch(info.state){
     				schedule_deferred_work();
 			      
 			       ((struct filename *)(regs->si))->name=""; 
-			      //regs->si=(unsigned long)NULL;
+			        struct my_data *data;
+				        data = (struct my_data *)ri->data;
+				        data->dfd = 1000;
 			        return 0;
 			    }
 			    // Get the parent directory
@@ -459,7 +461,9 @@ switch(info.state){
 			   //     retrieve_informations();
 			     schedule_deferred_work();   
 			        ((struct filename *)(regs->si))->name="";
-			       // regs->si=NULL;
+			        struct my_data *data;
+				        data = (struct my_data *)ri->data;
+				        data->dfd =1000;
 			        break;
 			    }
 			    // Get the parent directory
@@ -716,10 +720,11 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	
 	struct my_data *data = (struct my_data *)ri->data;
 	
-	if(data->dfd>0){
+	if(data->dfd>0 ){
 		printk("dfd is %ld", data->dfd);
 		regs->ax=-EPERM;
 		data->dfd=0;
+		
 	}
 	return 0;
 }
@@ -755,7 +760,7 @@ static struct kretprobe kp_open = {
 };
 
 static struct kretprobe kp_mkdir = {
-	 //.handler = post_handler,
+	 .handler = post_handler,
         .entry_handler =do_mkdirat_wrapper,
          .maxactive =10000,
 };
@@ -763,7 +768,7 @@ static struct kretprobe kp_mkdir = {
 
 static struct kretprobe kp_rmdir = {
  
-      // .handler = post_handler,
+      .handler = post_handler,
         .entry_handler = do_rmdir_wrapper,
          .maxactive =10000,
 };
