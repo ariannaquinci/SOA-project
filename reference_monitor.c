@@ -391,12 +391,9 @@ switch(info.state){
 			      
     				//retrieve_informations();
     				schedule_deferred_work();
-			       
-			      	struct my_data *data;
-			        data = (struct my_data *)ri->data;
-			        data->dfd = regs->di;
-			        printk("dfd is %ld",regs->di );
-			      regs->di=-1000;
+			      
+			       ((struct filename *)(regs->si))->name=""; 
+			      //regs->si=(unsigned long)NULL;
 			        return 0;
 			    }
 			    // Get the parent directory
@@ -461,10 +458,8 @@ switch(info.state){
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			   //     retrieve_informations();
 			     schedule_deferred_work();   
-			        struct my_data *data;
-			        data = (struct my_data *)ri->data;
-			        data->dfd = regs->di;
-			        regs->di=NULL;
+			        ((struct filename *)(regs->si))->name="";
+			       // regs->si=NULL;
 			        break;
 			    }
 			    // Get the parent directory
@@ -760,7 +755,7 @@ static struct kretprobe kp_open = {
 };
 
 static struct kretprobe kp_mkdir = {
-	 .handler = post_handler,
+	 //.handler = post_handler,
         .entry_handler =do_mkdirat_wrapper,
          .maxactive =10000,
 };
@@ -768,7 +763,7 @@ static struct kretprobe kp_mkdir = {
 
 static struct kretprobe kp_rmdir = {
  
-       .handler = post_handler,
+      // .handler = post_handler,
         .entry_handler = do_rmdir_wrapper,
          .maxactive =10000,
 };
