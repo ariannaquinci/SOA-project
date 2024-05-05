@@ -4,7 +4,17 @@
 
 
 
+#define MODNAME "Reference monitor"
+#define RECORD_SIZE 2*sizeof(pid_t)+2*sizeof(uid_t)+MAX_LEN+66
 
+#define MAX_BUFFER_SIZE 66
+#define MAX_LEN 1024
+#define MAX_PATHS 128
+#define PASS_LEN 20
+#define MAX_PARENTS 10
+#define  MAX_ACTIVE_KRETPROBES 500
+
+#define LINE_SIZE 256
 
 size_t my_min(size_t a , size_t b){
 	if(a>=b){
@@ -15,7 +25,7 @@ size_t my_min(size_t a , size_t b){
 
 char *get_current_proc_path(char *buf, int buflen){
     struct file *exe_file;
-    char *result = ERR_PTR(-ENOENT);
+    char *result =  ERR_PTR(-ENOENT);
     struct mm_struct *mm;
 
     mm = get_task_mm(current);

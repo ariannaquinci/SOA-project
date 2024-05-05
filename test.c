@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <pthread.h>
 
-#define NUM_THREADS 30
+#define NUM_THREADS 10
 
 int open_attempts = 0;
 

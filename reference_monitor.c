@@ -39,23 +39,14 @@
 #define target_func1 "do_mkdirat"
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
-#define RECORD_SIZE 2*sizeof(pid_t)+2*sizeof(uid_t)+MAX_LEN+66
 
-#define MAX_BUFFER_SIZE 66
 #define AUDIT if(1)open
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Arianna Quinci");
 MODULE_DESCRIPTION("see the README file");
 
-#define MODNAME "Reference monitor"
 
-#define MAX_LEN 1024
-#define MAX_PATHS 128
-#define PASS_LEN 20
-#define MAX_PARENTS 10
-
-#define LINE_SIZE 256
 
 #define DEVICE_NAME "/dev/reference_monitor"  /* Device file name in /dev/ */
 
@@ -204,8 +195,6 @@ void do_deferred_work(struct work_struct *work) {
         return;
     }
 }
-
-
 void schedule_deferred_work(void) {
     struct workqueue_struct *queue;
     deferred_work_data *data;
@@ -232,43 +221,25 @@ void schedule_deferred_work(void) {
     data->deferred_record.current_uid = cred->uid.val;
     data->deferred_record.current_euid = cred->euid.val;
     char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
-    if(!buf){
-    	printk("Impossible to allocate space for buf");
-    	return;
-    }
-    char path[MAX_LEN];
-  
-char *result = get_current_proc_path(path, MAX_LEN);
-
-if (IS_ERR(result)) {
-    if (PTR_ERR(result) == -ENOENT) {
-        // Il percorso non è disponibile, gestisci di conseguenza
-        printk(KERN_ERR "Path not available\n");
-    } else {
-        // Errore generico, gestisci di conseguenza
-        printk(KERN_ERR "Error retrieving process path: %ld\n", PTR_ERR(result));
-    }
-    kfree(data); // Libera la memoria allocata per i dati
-    destroy_workqueue(queue); // Libera la coda di lavoro
-    return;
-}
-
-// Il percorso è stato ottenuto correttamente, procedi con l'utilizzo
-
-   
-   
-   strncpy(path,get_current_proc_path(buf, MAX_LEN), MAX_LEN);
-    
-
-    if (path == NULL || path == -ENOENT) {
-        kfree(buf);
+    if (!buf) {
+        printk("Impossible to allocate space for buf");
         kfree(data); // Libera la memoria allocata per i dati
         destroy_workqueue(queue); // Libera la coda di lavoro
         return;
     }
 
+    char *path = get_current_proc_path(buf, MAX_LEN);
+    if (IS_ERR(path)) {
+        printk(KERN_ERR "Failed to retrieve process path\n");
+        kfree(data); // Libera la memoria allocata per i dati
+        kfree(buf);
+        destroy_workqueue(queue); // Libera la coda di lavoro
+        return;
+    }
+
+    // Copia il percorso nel campo program_path dei dati differiti
     strncpy(data->deferred_record.program_path, path, MAX_LEN);
-    kfree(buf);
+    kfree(buf); // Libera il buffer utilizzato per il percorso
 
     printk("schedule_deferred_work: pid %d, tgid %d, uid %d, euid %d, path %s\n",
            data->deferred_record.pid, data->deferred_record.tgid,
@@ -283,51 +254,10 @@ if (IS_ERR(result)) {
 
     // Libera la memoria allocata per i dati dopo che il lavoro è stato accodato
     // poiché i dati non sono più necessari dopo l'accodamento
-    kfree(data);
+    //kfree(data);
 }
 
-void schedule_deferred_work(void) {
-	struct workqueue_struct *queue=create_singlethread_workqueue("recording_queue");
-	deferred_work_data *data;
 
-	// Alloca memoria per i dati in maniera non bloccante
-	data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
-	if (!data) {
-	printk(KERN_ERR "Failed to allocate memory for deferred work\n");
-	return;
-	}
-	struct cred *cred=get_task_cred(current);
-
-
-	data->deferred_record.tgid=current->tgid;
-	data->deferred_record.pid=current->pid;
-	data->deferred_record.current_uid = cred->uid.val;
-	data->deferred_record.current_euid = cred->euid.val;
-	char *buf=kmalloc(MAX_LEN,GFP_KERNEL);
-	char path[MAX_LEN];
-	strncpy(path, get_current_proc_path(buf, MAX_LEN), MAX_LEN);
-
-	if(path==NULL || path==-ENOENT){
-	kfree(buf);
-	return ;
-	}
-
-	strncpy(data->deferred_record.program_path,path, MAX_LEN);
-	kfree(buf);
-
-
-
-	printk("schedule_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path);
-
-	// Inizializza il lavoro differito
-
-	INIT_WORK(&(data->work), do_deferred_work);
-
-	queue_work(queue,&(data->work));
-	kfree(data);
-}
-
-*/
 int RM_add_path(char *new_path){
 	spin_lock(&info.spinlock);
 	//check if status is reconfigurable, otherwise exit without applying changes
@@ -792,6 +722,7 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	struct my_data *data = (struct my_data *)ri->data;
 	
 	if(data->dfd>0){
+		printk("dfd is %ld", data->dfd);
 		regs->ax=-EPERM;
 		data->dfd=0;
 	}
@@ -824,12 +755,14 @@ static struct kretprobe kp_open = {
 	.handler = post_handler,
 	.entry_handler=do_filp_open_wrapper,
 	.data_size=sizeof(struct my_data),
+	 .maxactive = 10000,
 	
 };
 
 static struct kretprobe kp_mkdir = {
 	 .handler = post_handler,
         .entry_handler =do_mkdirat_wrapper,
+         .maxactive =10000,
 };
 
 
@@ -837,6 +770,7 @@ static struct kretprobe kp_rmdir = {
  
        .handler = post_handler,
         .entry_handler = do_rmdir_wrapper,
+         .maxactive =10000,
 };
 
 
@@ -844,6 +778,7 @@ static struct kretprobe kp_unlink = {
         .handler = post_handler,
         .entry_handler = do_unlinkat_wrapper,
         .data_size=sizeof(struct my_data),
+         .maxactive =10000,
 };
 
 int reference_monitor_on(void){

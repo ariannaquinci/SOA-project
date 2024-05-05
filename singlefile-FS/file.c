@@ -128,11 +128,11 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
     
     
     off = i_size_read(inode); 
-
+	
     //determine the block level offset for the operation
     offset = off % DEFAULT_BLOCK_SIZE; 
     //just read stuff in a single block - residuals will be managed at the applicatin level
-    
+    printk("actual offset is %d", offset);
     if (offset + len > DEFAULT_BLOCK_SIZE)
         len = DEFAULT_BLOCK_SIZE - offset;
 
@@ -165,5 +165,5 @@ const struct inode_operations onefilefs_inode_ops = {
 const struct file_operations onefilefs_file_operations = {
     .owner = THIS_MODULE,
     .read = onefilefs_read,
-    .write_iter = onefilefs_write //please implement this function to complete the exercise
+    .write_iter = onefilefs_write 
 };
