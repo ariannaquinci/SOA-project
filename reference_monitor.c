@@ -656,6 +656,10 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
 				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
 				     	flags->open_flag&= O_RDONLY;
+				       struct my_data *data;
+				        data = (struct my_data *)ri->data;
+				        data->dfd = regs->di;
+				        printk("dfd is %ld",regs->di );
 				        return 0;
 				    }
 				    // Get the parent directory
@@ -676,12 +680,13 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				         //calling the function that permits to write to the append-only file
-			 //      retrieve_informations();
-			schedule_deferred_work();
+		
+					schedule_deferred_work();
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;
 				        printk("dfd is %ld",regs->di );
+				        regs->di=-1000;
 				        return 0;
 				    }
 				    // Get the parent directory
@@ -716,9 +721,10 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	
 	struct my_data *data = (struct my_data *)ri->data;
-	
+		
 	if(data->dfd>0 ){
 		printk("dfd is %ld", data->dfd);
+		printk("into post handler");
 		regs->ax=-EPERM;
 		data->dfd=0;
 		
@@ -752,14 +758,14 @@ static struct kretprobe kp_open = {
 	.handler = post_handler,
 	.entry_handler=do_filp_open_wrapper,
 	.data_size=sizeof(struct my_data),
-	 .maxactive = 10000,
+	
 	
 };
 
 static struct kretprobe kp_mkdir = {
 	 .handler = post_handler,
         .entry_handler =do_mkdirat_wrapper,
-         .maxactive =10000,
+     .data_size=sizeof(struct my_data),
 };
 
 
@@ -767,7 +773,7 @@ static struct kretprobe kp_rmdir = {
  
       .handler = post_handler,
         .entry_handler = do_rmdir_wrapper,
-         .maxactive =10000,
+        .data_size=sizeof(struct my_data),
 };
 
 
@@ -775,7 +781,7 @@ static struct kretprobe kp_unlink = {
         .handler = post_handler,
         .entry_handler = do_unlinkat_wrapper,
         .data_size=sizeof(struct my_data),
-         .maxactive =10000,
+     
 };
 
 int reference_monitor_on(void){
