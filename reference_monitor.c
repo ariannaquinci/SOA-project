@@ -646,7 +646,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				        //calling the function that permits to write to the append-only file
-			       	//retrieve_informations();
+			       	
 				        schedule_deferred_work();
 				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
 				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
@@ -727,7 +727,7 @@ static int RM_open(struct inode *inode, struct file *file) {
 
 //struct file operations containing mapping between actual driver's operations and standard operations
 static struct file_operations fops = {
-  .owner = THIS_MODULE,	//macro "THIS_MODULE" return pointer to the module struct
+  .owner = THIS_MODULE,	
   .write = RM_write,
   .open=RM_open,
   

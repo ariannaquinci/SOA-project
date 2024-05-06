@@ -2,6 +2,7 @@
 Developement of: https://francescoquaglia.github.io/TEACHING/AOS/CURRENT/PROJECTS/project-specification-2023-2024.html
 
 In order to interact with the reference monitor you need to provide the password, the default one is "changeme".
+
 To interact with the reference monitor you can use both:
 - sudo ./frontend 
 - sudo ./user with this sintax: (PLEASE IF YOUR PASSWORD CONTAINS SPECIAL CHARACTERS (e.g. !) INSERT A \ BEFORE EACH ONE)
