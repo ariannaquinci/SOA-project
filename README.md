@@ -5,10 +5,10 @@ In order to interact with the reference monitor you need to provide the password
 To interact with the reference monitor you can use both:
 - sudo ./frontend 
 - sudo ./user with this sintax: (PLEASE IF YOUR PASSWORD CONTAINS SPECIAL CHARACTERS (e.g. !) INSERT A \ BEFORE EACH ONE)
-	- sudo ./user new_state <STATE> <your password>
-	- sudo ./user change_pw <new password> <old password> 
-	- sudo ./user add_path <new path> <your password>
-	- sudo ./user remove_path <path to remove> <your password>
+	- sudo ./user new_state </STATE/> </your password/>
+	- sudo ./user change_pw </new password/> </old password/> 
+	- sudo ./user add_path </new path/> </your password/>
+	- sudo ./user remove_path </path to remove/> </your password/>
 
 In the directory "test" you'll find some test:
 - concurrency_test.c contains tests to perform concurrent state changes of the RM by several threads. It will ask you to insert the password.
