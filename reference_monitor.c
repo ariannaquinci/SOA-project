@@ -85,7 +85,7 @@ bool check_passwd(char* pw){
 	pw_digest=kmalloc(33,GFP_KERNEL);
 	memset(pw_digest,0,33);
 	int ret=0;
-	printk("len is %d",strlen(pw));
+	
 	ret=do_sha256(pw, pw_digest,strlen(pw));
 	if(ret!=0){
 		printk(KERN_ERR "error in calculating sha256 of the password");
@@ -102,10 +102,10 @@ bool check_passwd(char* pw){
 
 
 int RM_change_pw(char *new){
-	printk("into change password");
+	
 	spin_lock(&info.spinlock);
 	if(strlen(new)> PASS_LEN-1){ printk(KERN_ERR "too long password"); spin_unlock(&info.spinlock); return -1;}
-	printk("len is %d", strlen(new));
+	
 	do_sha256(new, info.passwd, strlen(new));
 	
 	spin_unlock(&info.spinlock);
@@ -372,7 +372,6 @@ switch(info.state){
 			break;
 		case(ON):
 		case(REC_ON):
-			printk("into mkdir wrapper");	
 			
 			name=((struct filename *)(regs->si))->name;
 			
@@ -436,7 +435,6 @@ switch(info.state){
 			break;
 		case(ON):
 		case(REC_ON):
-		printk("Into rmdir wrapper");
 				memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
@@ -455,7 +453,6 @@ switch(info.state){
 			 char *directory = abs_path;
         		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
         		
-			printk("Into rmdir wrapper; path is: %s", directory);
 			   if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			   //     retrieve_informations();
@@ -783,7 +780,6 @@ static struct kretprobe kp_unlink = {
 
 int reference_monitor_on(void){
 	
-	printk("into reference_monitor_on");
 	printk("RM was %d\n", info.state);
 	
 	info.state=ON;
@@ -792,7 +788,6 @@ int reference_monitor_on(void){
 	return 0;
 }
 int reference_monitor_off(void){
-		printk("into reference_monitor_off");
 		
 		info.state=OFF;
 		printk("RM is %d\n", info.state);
@@ -801,7 +796,6 @@ int reference_monitor_off(void){
 }
 
 int reference_monitor_rec_off(void){
-		printk("into reference_monitor_rec_off");
 		
 		info.state=REC_OFF;
 		printk("RM is %d\n", info.state);
@@ -810,8 +804,6 @@ int reference_monitor_rec_off(void){
 }
 
 int reference_monitor_rec_on(void){
-
-	printk("into reference_monitor_rec_on");
 	
 		info.state=REC_ON;
 		printk("RM is %d\n", info.state);
@@ -842,46 +834,50 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
   	
 	kfree(buffer);
   	if(check_passwd(args[2])){
-	//if(strcmp(args[2],info.passwd)==0){
+		
 		
 		if(strcmp(args[0],"new_state")==0){
 			if(strcmp(args[1],"ON")==0){
 					
 					reference_monitor_on();
 			}
-			if(strcmp(args[1],"OFF")==0){
+			else if(strcmp(args[1],"OFF")==0){
 				
 					reference_monitor_off();
 			}
-			if(strcmp(args[1],"REC_OFF")==0){
+			else if(strcmp(args[1],"REC_OFF")==0){
 				
 					reference_monitor_rec_off();
 			}
-			if(strcmp(args[1],"REC_ON")==0){
+			else if(strcmp(args[1],"REC_ON")==0){
 					
 					reference_monitor_rec_on();
 			}else{
-				printk("Invalid argument");
+				
+				printk(KERN_ERR "Invalid argument");
 			}
 		}
-		if(strcmp(args[0],"change_pw")==0){
-			printk("arg is change password");
+		else if(strcmp(args[0],"change_pw")==0){
+			
 			RM_change_pw(args[1]);
 		}
-		if (strcmp(args[0],"add_path")==0){
+		else if (strcmp(args[0],"add_path")==0){
 			
 			RM_add_path(args[1]);
 		}
-		if(strcmp(args[0],"remove_path")==0){
+		else if(strcmp(args[0],"remove_path")==0){
 		
 			RM_remove_path(args[1]);
-		}
+		}else{
+		printk("into else because args[0] is %s", args[0]);
+				printk(KERN_ERR "Invalid argument");
+			}
 		
 		return len;
 		
 	
 	}
-	printk("wrong password passed: %s", args[2]);
+	printk(KERN_ERR "wrong password passed: %s", args[2]);
 
 	return -1;
 }
@@ -911,28 +907,28 @@ int init_module(void) {
 	kp_open.kp.symbol_name = target_func0;
 	ret = register_kretprobe(&kp_open);
      if (ret < 0) {
-                printk("%s: kretprobe filp open registering failed, returned %d\n",MODNAME,ret);
+                printk(KERN_ERR "%s: kretprobe filp open registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
             kp_mkdir.kp.symbol_name=target_func1;
       ret = register_kretprobe(&kp_mkdir);
      
         if (ret < 0) {
-                printk("%s: kretprobe mkdir registering failed, returned %d\n",MODNAME,ret);
+                printk(KERN_ERR "%s: kretprobe mkdir registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
          kp_rmdir.kp.symbol_name=target_func2;
        ret = register_kretprobe(&kp_rmdir);
        
         if (ret < 0) {
-                printk("%s: kretprobe rmdir registering failed, returned %d\n",MODNAME,ret);
+                printk(KERN_ERR "%s: kretprobe rmdir registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
          kp_unlink.kp.symbol_name=target_func3;
         
        ret = register_kretprobe(&kp_unlink);
 	 if (ret < 0) {
-                printk("%s: kretprobe unlink registering failed, returned %d\n",MODNAME,ret);
+                printk(KERN_ERR "%s: kretprobe unlink registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
         

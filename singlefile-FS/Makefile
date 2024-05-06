@@ -1,6 +1,3 @@
-# Execute the commands in the following order. 
-# make load-FS-driver, make mount-fs need root capabilities.
-
 obj-m += singlefilefs.o
 singlefilefs-objs += singlefilefs_src.o file.o dir.o
 
@@ -16,7 +13,7 @@ create:
 	./singlefilemakefs image
 	mkdir mount
 	
-mount-fs:
+mnt:
 	sudo mount -o loop -t singlefilefs image ./mount/
 
 	

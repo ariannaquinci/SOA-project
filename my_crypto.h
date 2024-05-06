@@ -19,7 +19,7 @@ void hash_to_string(const unsigned char *hash, char *output) {
     output[32 * 2+1] = '\0';
 }
 static int do_sha256(const unsigned char *data, unsigned char *out_digest, size_t datalen){
-	printk("into do_sha256");
+	
     struct crypto_shash *alg;
     char *hash_alg_name = SHA_256;
     
@@ -29,7 +29,7 @@ static int do_sha256(const unsigned char *data, unsigned char *out_digest, size_
 	handle required for any subsequent API invocation
 	 for that message digest.*/
     alg = crypto_alloc_shash(hash_alg_name, 0, 0);
-    printk("fin qui tutto bene");
+ 
     if(IS_ERR(alg)){
         pr_info("can't alloc alg %s\n", hash_alg_name);
         return PTR_ERR(alg);
