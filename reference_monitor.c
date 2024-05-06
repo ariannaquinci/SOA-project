@@ -1,14 +1,9 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
-
 #include <linux/scatterlist.h>
 #include <linux/fs_struct.h>
 #include <linux/mm_types.h>
-
 #include <linux/dcache.h>
-
-
-#include "my_crypto.h"
 #include <linux/namei.h>
 #include <linux/cdev.h>
 #include <linux/errno.h>
@@ -32,7 +27,7 @@
 #include <linux/fs.h>
 #include <linux/path.h>
 #include <linux/slab.h>
-
+#include "my_crypto.h"
 #include "RM_utils.h"
 
 #define target_func0 "do_filp_open"
@@ -40,7 +35,7 @@
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
 
-#define AUDIT if(1)open
+
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Arianna Quinci");
@@ -527,10 +522,11 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 			       
 			     // retrieve_informations();
 			     schedule_deferred_work();
+			       
+			         ((struct filename *)(regs->si))->name="";
 			        struct my_data *data;
-			        data = (struct my_data *)ri->data;
-			        data->dfd = regs->di;
-			        regs->di=-1000;
+				data = (struct my_data *)ri->data;
+				data->dfd =1000;
 			        break;
 			    }
 			    // Get the parent directory
@@ -659,7 +655,7 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;
-				        printk("dfd is %ld",regs->di );
+				       
 				        return 0;
 				    }
 				    // Get the parent directory
@@ -680,30 +676,18 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 				   if (checkBlacklist(directory) == -EPERM ) {
 				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 				         //calling the function that permits to write to the append-only file
-		
 					schedule_deferred_work();
 				       struct my_data *data;
 				        data = (struct my_data *)ri->data;
 				        data->dfd = regs->di;
-				        printk("dfd is %ld",regs->di );
 				        regs->di=-1000;
 				        return 0;
 				    }
 				    // Get the parent directory
 				    directory = custom_dirname(directory);
-				   
-				   
-				     
-                	}
+			}
 			}
 			
-                	
-			
-        		
-				
-
-			
-
 			break;
 
 		default:
@@ -723,8 +707,6 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	struct my_data *data = (struct my_data *)ri->data;
 		
 	if(data->dfd>0 ){
-		printk("dfd is %ld", data->dfd);
-		printk("into post handler");
 		regs->ax=-EPERM;
 		data->dfd=0;
 		
@@ -814,7 +796,7 @@ int reference_monitor_rec_on(void){
 		info.state=REC_ON;
 		printk("RM is %d\n", info.state);
 		return 0;
-	}
+}
 
 
 static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *off){
@@ -875,7 +857,7 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 		
 			RM_remove_path(args[1]);
 		}else{
-		printk("into else because args[0] is %s", args[0]);
+		
 				printk(KERN_ERR "Invalid argument");
 			}
 		

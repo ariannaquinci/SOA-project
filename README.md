@@ -13,7 +13,7 @@ To interact with the reference monitor you can use both:
 In the directory "test" you'll find some test:
 - concurrency_test.c contains tests to perform concurrent state changes of the RM by several threads. It will ask you to insert the password.
 - test.c let inserts a directory in the blacklist and tries to create a directory in it.
-- test-file.c inserts a directory in the blacklist and tries to open a file in write mode in it.
+- test-file.c inserts a directory in the blacklist and, after creating a file in it tries to open it in write mode.
 - test-rmdir creates a directory into the path that will be inserted into blacklist then it tries to remove it.
 - test-unlink like test-rmdir but instead of a diretcory it creates and deletes a file.
 
