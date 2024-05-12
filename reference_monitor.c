@@ -20,7 +20,7 @@
 #include <asm/page.h>
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
-#include <linux/syscalls.h> i
+#include <linux/syscalls.h> 
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/spinlock.h>
@@ -149,12 +149,10 @@ bool write_append_only(char* line) {
         return false;
     }
 
-	   
-	    printk("strlen is: %d", strlen(line));
 	   ret = kernel_write(file,line, strlen(line),&pos);
-	  printk("returned from write_iter: %d", ret); 
+	 
 	    if (ret < strlen(line)) {
-	    	printk("wrote only %d bytes", ret);
+	    	printk(KERN_ERR "wrote only %d bytes", ret);
 		printk(KERN_ERR "Failed to write the file\n");
 		filp_close(file, NULL);
 		
@@ -296,7 +294,7 @@ int RM_add_path(char *new_path){
 }
 int RM_remove_path(char * path){
 	spin_lock(&info.spinlock);
-	struct file *f;
+	
 	char* abs_path=get_absolute_path_by_name(path);
 	if(abs_path==NULL){
     		printk(KERN_ERR "file doesn't exist");
@@ -357,7 +355,7 @@ switch(info.state){
 		char *directory;
 		char*name; 
 		char* abs_path;
-		memset(abs_path,0,MAX_LEN);
+	
 		
 		
 		case(OFF):
@@ -413,14 +411,13 @@ switch(info.state){
 static int do_rmdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
 	
 switch(info.state){	
-		char result[MAX_LEN];
+		
 		char *name;
 		struct file *file ;
-		int open_mode ;
-		
+			
 		char *abs_path;
 		
-		memset(abs_path,0,MAX_LEN);
+	
 		
 		
 		case(OFF):
@@ -430,7 +427,6 @@ switch(info.state){
 			break;
 		case(ON):
 		case(REC_ON):
-				memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
 			
@@ -481,12 +477,10 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 	switch(info.state){	
 		char result[MAX_LEN];
 		char *name;
-		struct file *file ;
-		int open_mode ;
+	
 		
 		char *abs_path;
 		
-		memset(abs_path,0,MAX_LEN);
 		
 		
 		case(OFF):
@@ -497,7 +491,6 @@ static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *re
 		case(ON):
 		case(REC_ON):
 			
-			memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
 			
@@ -587,16 +580,13 @@ struct open_flags {
 
 static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
 	switch(info.state){
-
-		char result[MAX_LEN];
 		struct open_flags *flags; 
 		char *name;
-		struct file *file ;
+		
 		int open_mode ;
 
 		char *abs_path;
 		
-		memset(abs_path,0,MAX_LEN);
 
 
 		case(OFF):
@@ -607,7 +597,6 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 		case(ON):
 		case(REC_ON):
 			
-			memset(result, 0, MAX_LEN);
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
 

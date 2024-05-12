@@ -55,7 +55,7 @@ int main() {
 
     // try to create a directory in the added path
     char mkdir_command[200];
-    sprintf(mkdir_command, "mkdir -p %s/test_directory", path);
+    sprintf(mkdir_command, "mkdir -p %s/test_dir", path);
     system(mkdir_command);
 
 
