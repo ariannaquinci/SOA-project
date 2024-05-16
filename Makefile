@@ -11,5 +11,6 @@ load:
 	sudo mknod /dev/reference_monitor c 237 0
 
 unload:
-	sudo rm -rf /dev/reference_monitor c 237 0
-	sudo rmmod reference_monitor	
+	sudo rmmod reference_monitor
+	sudo rm -rf /dev/reference_monitor 
+		

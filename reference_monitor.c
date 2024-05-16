@@ -35,7 +35,7 @@
 #define target_func1 "do_mkdirat"
 #define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
-
+#define HASH_SIZE 32
 
 
 MODULE_LICENSE("GPL");
@@ -167,64 +167,7 @@ bool write_append_only(char* line) {
   
     return true;
 }
-/*
 
-void do_deferred_work(struct work_struct *work) {
-    deferred_work_data *data = container_of(work, deferred_work_data, work);
-    char hash_result[65];
-    
-    char *buffer;
-    char line[RECORD_SIZE];
-    int res = 0;
-   printk("do_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  
-   data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path); 
-   struct file *filp;
-    ssize_t ret = -EINVAL;
- 
- 
-    // Apre il file eseguibile in modalità di sola lettura
-    filp = filp_open(data->deferred_record.program_path, O_RDONLY,0);
-    if (IS_ERR(filp)) {
-        printk(KERN_ERR "Failed to open executable file\n");
-      
-        return ;
-    }
-
-   
-
- loff_t size=vfs_llseek(filp, 0, SEEK_END);
-  
-
-   buffer=(char*)kmalloc(size,GFP_KERNEL);
- if (!buffer) {
-        printk("Impossible to allocate space for buffer");
-         filp_close(filp, NULL);
-         
-       return;
-    }
-
-     res = kernel_read(filp, buffer, size,0);
-   
-    if (res < 0) {
-        printk(KERN_ERR "Impossible to read content");
-        kfree(buffer);
-        filp_close(filp,NULL);
-        return;
-    }
-    filp_close(filp,NULL);
-    // Esegui il calcolo dell'hash
-    do_sha256(buffer, hash_result,size );
-    hash_to_string(hash_result, data->deferred_record.content_hash);
-    kfree(buffer);
-    //scrivo su file
-    if (concatenate_record_to_buffer(data, line)) {
-        if(!write_append_only(line)){printk(KERN_ERR "impossible to write append only");}
-       
-        return;
-    }
-}
-*/
-#define HASH_SIZE 32
 
 void do_deferred_work(struct work_struct *work) {
     deferred_work_data *data = container_of(work, deferred_work_data, work);
@@ -425,203 +368,6 @@ int checkBlacklist(char* open_path){
 	spin_unlock(&info.spinlock);
 	return 0;
 }
-/*
-struct my_data{
-	unsigned long dfd;
-};
-
-
-static int do_mkdirat_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
-		
-switch(info.state){	
-		char *directory;
-		char*name; 
-		char* abs_path;
-	
-		
-		
-		case(OFF):
-		case(REC_OFF):
-			//if RM is OFF or REC_OFF return immediately
-			
-			break;
-		case(ON):
-		case(REC_ON):
-			
-			name=((struct filename *)(regs->si))->name;
-			
-			//retrieve the parent and get its absolute path
-			name= custom_dirname(name);
-			abs_path=get_absolute_path_by_name(name);
-			if(abs_path==NULL){
-				directory=get_cwd();
-			}else{
-				directory=abs_path;
-			}
-			while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-        			printk("directory is %s",directory);
-			   if (checkBlacklist(directory) == -EPERM ) {
-			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			      
-    				//retrieve_informations();
-    				schedule_deferred_work();
-			      
-			       ((struct filename *)(regs->si))->name=""; 
-			        struct my_data *data;
-				        data = (struct my_data *)ri->data;
-				        data->dfd = 1000;
-			        return 0;
-			    }
-			    // Get the parent directory
-			    directory = custom_dirname(directory);
-			   
-			   
-			     
-        		}
-                default:
-			
-			break;
-		}
-	
-	
-	
-	return 0;
-}
-
-
-
-static int do_rmdir_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
-	
-switch(info.state){	
-		
-		char *name;
-		struct file *file ;
-			
-		char *abs_path;
-		
-	
-		
-		
-		case(OFF):
-		case(REC_OFF):
-			//if RM is OFF or REC_OFF return immediately
-			
-			break;
-		case(ON):
-		case(REC_ON):
-			//things to do when RM is ON or REC_ON
-			//check if path has been opened in write mode
-			
-			name= ((struct filename *)(regs->si))->name;
-			 if (IS_ERR(name)) {
-				pr_err("Error getting filename\n");
-				return 0;
-	    		}
-	    		
-				 
-			abs_path=get_absolute_path_by_name(name);
-	
-	
-			
-			 char *directory = abs_path;
-        		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-        		
-			   if (checkBlacklist(directory) == -EPERM ) {
-			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			   //     retrieve_informations();
-			     schedule_deferred_work();   
-			        ((struct filename *)(regs->si))->name="";
-			        struct my_data *data;
-				        data = (struct my_data *)ri->data;
-				        data->dfd =1000;
-			        break;
-			    }
-			    // Get the parent directory
-			    directory = custom_dirname(directory);
-			   
-			   
-			     
-        		}
-			
-			break;
-			
-		default:
-			break;
-		
-	}
-		
-	return 0;
-
-
-}
-
-static int do_unlinkat_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){	
-	switch(info.state){	
-		char result[MAX_LEN];
-		char *name;
-	
-		
-		char *abs_path;
-		
-		
-		
-		case(OFF):
-		case(REC_OFF):
-			//if RM is OFF or REC_OFF return immediately
-			
-			break;
-		case(ON):
-		case(REC_ON):
-			
-			//things to do when RM is ON or REC_ON
-			//check if path has been opened in write mode
-			
-			name= ((struct filename *)(regs->si))->name;
-			
-			 if (IS_ERR(name)) {
-				pr_err(KERN_ERR "Error getting filename\n");
-				return 0;
-	    		}
-	    		if(temporal_file(name)){
-	    			return 0;
-	    		}
-				 
-			abs_path=get_absolute_path_by_name(name);
-			
-			 char *directory = abs_path;
-        		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-        		
-			   if (checkBlacklist(directory) == -EPERM ) {
-			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			         //calling the function that permits to write to the append-only file
-			       
-			     // retrieve_informations();
-			     schedule_deferred_work();
-			       
-			         ((struct filename *)(regs->si))->name="";
-			        struct my_data *data;
-				data = (struct my_data *)ri->data;
-				data->dfd =1000;
-			        break;
-			    }
-			    // Get the parent directory
-			    directory = custom_dirname(directory);
-			   
-			   
-			     
-        		}
-			
-			break;
-			
-		default:
-			break;
-		
-	}
-		
-	return 0;
-
-}
-
 
 /*
 segnatura della do_filp_open: 
@@ -657,138 +403,11 @@ struct open_flags {
 	int intent;
 	int lookup_flags;
 };
-/*
-
-
-static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
-	switch(info.state){
-		struct open_flags *flags; 
-		char *name;
-		
-		int open_mode ;
-
-		char *abs_path;
-		
-
-
-		case(OFF):
-		case(REC_OFF):
-			//if RM is OFF or REC_OFF return immediately
-
-			break;
-		case(ON):
-		case(REC_ON):
-			
-			//things to do when RM is ON or REC_ON
-			//check if path has been opened in write mode
-
-			name= ((struct filename *)(regs->si))->name;
-			if (IS_ERR(name)) {
-				pr_err(KERN_ERR "Error getting filename\n");
-				return 0;
-			}
-			//se file sono temporanei ritorno subito idem se il file è il dispositivo reference_monitor
-			if (((strncmp(name, "/run", strlen("/run"))) == 0)
-			||((strncmp(name, "/tmp", strlen("/tmp"))) == 0) 
-			||((strncmp(name, "/var/tmp", strlen("/var/tmp"))) == 0)
-			||((strncmp(name, "/dev/reference_monitor", strlen("/dev/reference_monitor"))) == 0) ){
-
-				break;
-			}
-
-			flags= (struct open_flags *)(regs->dx); //access to dx that is the thirth argument
-
-			open_mode =flags->open_flag;
-			unsigned long fd;
-			fd= regs->di;
-			char *directory;
-			abs_path=get_absolute_path_by_name(name);
-			if(open_mode & O_CREAT && abs_path==NULL){
-				char* path;
-				directory=get_cwd();
-				//if file doesn't exist yet I take its parent directory and retrieve the absolute path
-				path=custom_dirname(name);
-				
-				path=get_absolute_path_by_name(path);
-				if(path!=NULL){
-					directory=path;}
-				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-                		
-				   if (checkBlacklist(directory) == -EPERM ) {
-				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-				        //calling the function that permits to write to the append-only file
-			       	
-				        schedule_deferred_work();
-				        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
-				        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
-				        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
-				     	flags->open_flag&= O_RDONLY;
-				       struct my_data *data;
-				        data = (struct my_data *)ri->data;
-				        data->dfd = regs->di;
-				       
-				        return 0;
-				    }
-				    // Get the parent directory
-				    directory = custom_dirname(directory);
-				   
-				   
-				     
-                	}
-					
-			}
-			else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
-				
-				abs_path=get_absolute_path_by_name(name);
-				
-				directory = abs_path;
-				while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-                		
-				   if (checkBlacklist(directory) == -EPERM ) {
-				        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-				         //calling the function that permits to write to the append-only file
-					schedule_deferred_work();
-				       struct my_data *data;
-				        data = (struct my_data *)ri->data;
-				        data->dfd = regs->di;
-				        regs->di=-1000;
-				        return 0;
-				    }
-				    // Get the parent directory
-				    directory = custom_dirname(directory);
-			}
-			}
-			
-			break;
-
-		default:
-			break;
-
-	}
-
-	return 0;
-
-	
-}
-
-	
 
 
 
 	
-static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
-	
-	struct my_data *data = (struct my_data *)ri->data;
-		
-	if(data->dfd>0 ){
-		regs->ax=-EPERM;
-		data->dfd=0;
-		
-	}
-	return 0;
-}
 
-	*/
 
 
 static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
@@ -882,55 +501,34 @@ static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
 
 static int do_mkdirat_wrapper(struct kprobe *p, struct pt_regs *regs){
 		
-switch(info.state){	
 		char *directory;
 		char*name; 
 		char* abs_path;
-	
-		
-		
-		case(OFF):
-		case(REC_OFF):
-			//if RM is OFF or REC_OFF return immediately
-			
-			break;
-		case(ON):
-		case(REC_ON):
-			
-			name=((struct filename *)(regs->si))->name;
-			
-			//retrieve the parent and get its absolute path
-			name= custom_dirname(name);
-			abs_path=get_absolute_path_by_name(name);
-			if(abs_path==NULL){
-				directory=get_cwd();
-			}else{
-				directory=abs_path;
-			}
-			while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-        			printk("directory is %s",directory);
-			   if (checkBlacklist(directory) == -EPERM ) {
+		name=((struct filename *)(regs->si))->name;
+		//retrieve the parent and get its absolute path
+		name= custom_dirname(name);
+		abs_path=get_absolute_path_by_name(name);
+		if(abs_path==NULL){
+			directory=get_cwd();
+		}else{
+			directory=abs_path;
+		}
+		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        		printk("directory is %s",directory);
+		        if (checkBlacklist(directory) == -EPERM ) {
 			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
 			      
-    				//retrieve_informations();
-    				schedule_deferred_work();
-			      
-			     regs->di = -1000;
-			        return 0;
+				//retrieve_informations();
+				schedule_deferred_work();
+
+				regs->di = -1000;
+
+				return 0;
 			    }
 			    // Get the parent directory
 			    directory = custom_dirname(directory);
-			   
-			   
 			     
-        		}
-                default:
-			
-			break;
-		}
-	
-	
-	
+        	}
 	return 0;
 }
 
@@ -945,49 +543,40 @@ static int do_unlinkat_wrapper(struct kprobe *p, struct pt_regs *regs) {
 
     char *abs_path;
 
-    switch (info.state) {
-        case (OFF):
-        case (REC_OFF):
-            // Se RM è OFF o REC_OFF, ritorna immediatamente
-            break;
-        case (ON):
-        case (REC_ON):
-            // Operazioni da eseguire quando RM è ON o REC_ON
-            // Controlla se il percorso è stato aperto in modalità di scrittura
+    // Operazioni da eseguire quando RM è ON o REC_ON
+    // Controlla se il percorso è stato aperto in modalità di scrittura
 
-            name = ((struct filename *)(regs->si))->name;
+    name = ((struct filename *)(regs->si))->name;
 
-            if (IS_ERR(name)) {
-                pr_err(KERN_ERR "Errore nell'ottenere il nome del file\n");
-                return 0;
-            }
-
-            if (temporal_file(name)) {
-                return 0;
-            }
-
-            abs_path = get_absolute_path_by_name(name);
-
-            char *directory = abs_path;
-            while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
-
-                if (checkBlacklist(directory) == -EPERM) {
-                    printk(KERN_ERR "Errore: il percorso o la sua directory principale sono nella blacklist: %s", directory);
-                    // Chiamata alla funzione che consente di scrivere sul file di sola aggiunta
-                    schedule_deferred_work();
-
-                   regs->di =-1000;
-                   
-                    break;
-                }
-                // Ottieni la directory principale
-                directory = custom_dirname(directory);
-            }
-
-            break;
-        default:
-            break;
+    if (IS_ERR(name)) {
+        pr_err(KERN_ERR "Errore nell'ottenere il nome del file\n");
+        return 0;
     }
+
+    if (temporal_file(name)) {
+        return 0;
+    }
+
+    abs_path = get_absolute_path_by_name(name);
+
+    char *directory = abs_path;
+    while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
+
+        if (checkBlacklist(directory) == -EPERM) {
+            printk(KERN_ERR "Error path or its parent directory is in blacklist: %s", directory);
+            // Chiamata alla funzione che consente di scrivere sul file di sola aggiunta
+            schedule_deferred_work();
+              regs->di =-1000;
+           
+		printk("KPROBE:regs->di: %d", regs->di);
+         
+           
+            break;
+        }
+        // Ottieni la directory principale
+        directory = custom_dirname(directory);
+    }
+
 
     return 0;
 }
@@ -1008,43 +597,12 @@ static struct file_operations fops = {
   
  
 };
-/*
 
 
-static struct kretprobe kp_open = {
-	.handler = post_handler,
-	.entry_handler=do_filp_open_wrapper,
-	.data_size=sizeof(struct my_data),
-	
-	
-};
 
-static struct kretprobe kp_mkdir = {
-	 .handler = post_handler,
-        .entry_handler =do_mkdirat_wrapper,
-     .data_size=sizeof(struct my_data),
-};
-
-
-static struct kretprobe kp_rmdir = {
- 
-      .handler = post_handler,
-        .entry_handler = do_rmdir_wrapper,
-        .data_size=sizeof(struct my_data),
-};
-
-
-static struct kretprobe kp_unlink = {
-        .handler = post_handler,
-        .entry_handler = do_unlinkat_wrapper,
-        .data_size=sizeof(struct my_data),
-     
-};
-*/
 
 static int do_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
 	
-switch(info.state){	
 		
 		char *name;
 		struct file *file ;
@@ -1053,14 +611,6 @@ switch(info.state){
 		
 	
 		
-		
-		case(OFF):
-		case(REC_OFF):
-			//if RM is OFF or REC_OFF return immediately
-			
-			break;
-		case(ON):
-		case(REC_ON):
 			//things to do when RM is ON or REC_ON
 			//check if path has been opened in write mode
 			
@@ -1092,12 +642,6 @@ switch(info.state){
 			     
         		}
 			
-			break;
-			
-		default:
-			break;
-		
-	}
 		
 	return 0;
 
@@ -1125,37 +669,64 @@ static struct kprobe kp_rmdir = {
 };
 
 
-
 int reference_monitor_on(void){
-	
+	spin_lock(&info.spinlock);
 	printk("RM was %d\n", info.state);
-	
-	info.state=ON;
-	printk("RM is %d\n", info.state);
-
+	if(info.state==OFF||info.state==REC_OFF){
+		enable_kprobe(&kp_open);
+	 	enable_kprobe(&kp_do_unlinkat);
+	 	enable_kprobe(&kp_mkdir);
+	 	enable_kprobe(&kp_rmdir);
+	 	
+		info.state=ON;
+		printk("RM is %d\n", info.state);}
+	spin_unlock(&info.spinlock);
 	return 0;
 }
 int reference_monitor_off(void){
-		
+	spin_lock(&info.spinlock);
+	printk("RM was %d\n", info.state);
+	if(info.state==ON||info.state==REC_ON){
+		disable_kprobe(&kp_open);
+		disable_kprobe(&kp_do_unlinkat);
+		disable_kprobe(&kp_rmdir);
+		disable_kprobe(&kp_mkdir);
 		info.state=OFF;
 		printk("RM is %d\n", info.state);
-		return 0;
+	}
+	spin_unlock(&info.spinlock);
+	return 0;
 	
 }
 
 int reference_monitor_rec_off(void){
-		
+	spin_lock(&info.spinlock);
+	printk("RM was %d\n", info.state);
+	if(info.state==ON||info.state==REC_ON){
+		disable_kprobe(&kp_open);
+		disable_kprobe(&kp_do_unlinkat);
+		disable_kprobe(&kp_rmdir);
+		disable_kprobe(&kp_mkdir);
 		info.state=REC_OFF;
 		printk("RM is %d\n", info.state);
-		return 0;
+	}
+	spin_unlock(&info.spinlock);
+	return 0;
 	
 }
 
 int reference_monitor_rec_on(void){
-	
+	spin_lock(&info.spinlock);
+	printk("RM was %d\n", info.state);
+	if(info.state==OFF|info.state==REC_OFF){
+		enable_kprobe(&kp_open);
+	 	enable_kprobe(&kp_do_unlinkat);
+	 	enable_kprobe(&kp_mkdir);
+	 	enable_kprobe(&kp_rmdir);
 		info.state=REC_ON;
-		printk("RM is %d\n", info.state);
-		return 0;
+		printk("RM is %d\n", info.state);}
+	spin_unlock(&info.spinlock);
+	return 0;
 }
 
 
@@ -1253,7 +824,7 @@ int init_module(void) {
 	printk("major number is: %d", Major);
 	
 	//init info 
-	info.state=OFF;
+	//info.state=OFF;
 	do_sha256("changeme", info.passwd,strlen("changeme"));
 	strncpy(info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
 	
@@ -1280,33 +851,11 @@ int init_module(void) {
                 return ret;
         }
         
-	/*kp_open.kp.symbol_name = target_func0;
-	ret = register_kretprobe(&kp_open);
-     if (ret < 0) {
-                printk(KERN_ERR "%s: kretprobe filp open registering failed, returned %d\n",MODNAME,ret);
-                return ret;
-        }
-            kp_mkdir.kp.symbol_name=target_func1;
-      ret = register_kretprobe(&kp_mkdir);
-     
-        if (ret < 0) {
-                printk(KERN_ERR "%s: kretprobe mkdir registering failed, returned %d\n",MODNAME,ret);
-                return ret;
-        }
-         kp_rmdir.kp.symbol_name=target_func2;
-       ret = register_kretprobe(&kp_rmdir);
-       
-        if (ret < 0) {
-                printk(KERN_ERR "%s: kretprobe rmdir registering failed, returned %d\n",MODNAME,ret);
-                return ret;
-        }
-         kp_unlink.kp.symbol_name=target_func3;
+  
         
-       ret = register_kretprobe(&kp_unlink);
-	 if (ret < 0) {
-                printk(KERN_ERR "%s: kretprobe unlink registering failed, returned %d\n",MODNAME,ret);
-                return ret;
-        }*/
+        reference_monitor_off();
+        
+	
          queue = create_singlethread_workqueue("recording_queue");
     if (!queue) {
         printk(KERN_ERR "Failed to create work queue\n");
@@ -1319,24 +868,17 @@ int init_module(void) {
 
 void cleanup_module(void) {
         printk("%s: shutting down\n",MODNAME);
-   
+   	reference_monitor_off();
        
-        //unregistering kretprobes
-     /*   unregister_kretprobe(&kp_open);
-     
-       unregister_kretprobe(&kp_mkdir);
-        
-        unregister_kretprobe(&kp_rmdir);
-        
-        unregister_kretprobe(&kp_unlink);
-        printk("%s: kretprobes unregistered\n", MODNAME);*/
+        //unregistering kprobes
+
         unregister_kprobe(&kp_open);
         
          unregister_kprobe(&kp_do_unlinkat);
          unregister_kprobe(&kp_mkdir);
          unregister_kprobe(&kp_rmdir);
-        
-        printk("%s: kretprobes unregistered\n", MODNAME);
+         
+        printk("%s: kprobes unregistered\n", MODNAME);
         unregister_chrdev(Major, DEVICE_NAME);
         printk(KERN_INFO "%s: device unregistered, it was assigned major number %d\n",DEVICE_NAME,Major);
         printk("%s: Module correctly removed\n", MODNAME);
