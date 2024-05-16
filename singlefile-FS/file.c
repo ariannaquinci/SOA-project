@@ -11,14 +11,15 @@
 #include <linux/uio.h>
 #include "singlefilefs.h"
 
+static spinlock_t lock_log; 
 
 ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t * off) {
 
+    loff_t offset;
     struct buffer_head *bh = NULL;
     struct inode * the_inode = filp->f_inode;
     uint64_t file_size = the_inode->i_size;
     int ret;
-    loff_t offset;
     int block_to_read;//index of the block to be read from device
 
     printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)",MOD_NAME, len, *off, file_size);
@@ -26,14 +27,16 @@ ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t
     //this operation is not synchronized 
     //*off can be changed concurrently 
     //add synchronization if you need it for any reason
-
+    spin_lock(&lock_log);
     //check that *off is within boundaries
-    if (*off >= file_size)
-        return 0;
-    else if (*off + len > file_size)
-        len = file_size - *off;
+    if (*off >= file_size){
+    	 spin_unlock(&lock_log);
+        return 0;}
+    else if (*off + len > file_size){
+        len = file_size - *off;}
 
     //determine the block level offset for the operation
+ 
     offset = *off % DEFAULT_BLOCK_SIZE; 
     //just read stuff in a single block - residuals will be managed at the applicatin level
     if (offset + len > DEFAULT_BLOCK_SIZE)
@@ -46,12 +49,13 @@ ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t
 
     bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
     if(!bh){
+    	spin_unlock(&lock_log);
 	return -EIO;
     }
     ret = copy_to_user(buf,bh->b_data + offset, len);
     *off += (len - ret);
     brelse(bh);
-
+    spin_unlock(&lock_log);
     return len - ret;
 
 }
@@ -116,20 +120,22 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
     
     loff_t off;
+    loff_t offset;
     struct file *filp = kiocb->ki_filp;
     char *buf= iter->kvec->iov_base;
     size_t len = iter->kvec->iov_len;
  
     int block_to_read;//index of the block to be read from device
-    loff_t offset;
+   
     struct buffer_head *bh = NULL;
     struct inode * inode = filp->f_inode;
     i_size_write(inode, inode->i_size);
     
-    
+        spin_lock(&lock_log);
     off = i_size_read(inode); 
 	
     //determine the block level offset for the operation
+
     offset = off % DEFAULT_BLOCK_SIZE; 
     //just read stuff in a single block - residuals will be managed at the applicatin level
     printk("actual offset is %d", offset);
@@ -142,10 +148,11 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
 
     bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
     if(!bh){
+    	   spin_unlock(&lock_log);
 	return -EIO;
     }
     printk("len is %d and buf lenght is %d", len, strlen(buf)); 
-    memcpy(bh->b_data + offset, buf, len);
+    memcpy(bh->b_data +offset, buf, len);
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     off += len;
@@ -153,7 +160,7 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
     inode->i_size = off; 
     i_size_write(inode, off);
     brelse(bh);
-  
+    spin_unlock(&lock_log);
     return len;
 }
 

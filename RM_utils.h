@@ -8,13 +8,14 @@
 #define RECORD_SIZE 2*sizeof(pid_t)+2*sizeof(uid_t)+MAX_LEN+66
 
 #define MAX_BUFFER_SIZE 66
-#define MAX_LEN 1024
+#define MAX_LEN 2048
 #define MAX_PATHS 128
 #define PASS_LEN 20
 #define MAX_PARENTS 10
 #define  MAX_ACTIVE_KRETPROBES 500
 
 #define LINE_SIZE 256
+
 
 size_t my_min(size_t a , size_t b){
 	if(a>=b){
@@ -23,30 +24,45 @@ size_t my_min(size_t a , size_t b){
 	return a;
 }
 
-char *get_current_proc_path(char *buf, int buflen){
-    struct file *exe_file;
-    char *result =  ERR_PTR(-ENOENT);
-    struct mm_struct *mm;
 
+
+char *get_current_proc_path(void ){
+
+	 char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
+    if (!buf) {
+        printk("Impossible to allocate space for buf");
+       
+      return ERR_PTR(-ENOMEM);
+    }
+    struct file *exe_file;
+    char *result;
+    struct mm_struct *mm;
     mm = get_task_mm(current);
     if (!mm) {
+    	printk("INTO if (!mm)");
+    	
+    	result=   ERR_PTR(-ENOENT);
         goto out;
     }
     mmap_read_lock(mm);
     exe_file = mm->exe_file;
     if (exe_file) {
+    
         get_file(exe_file);
         path_get(&exe_file->f_path);
     }
-    mmap_read_unlock(mm);
+      mmap_read_unlock(mm);
     mmput(mm);
     if (exe_file) {
-        result = d_path(&exe_file->f_path, buf, buflen);
+        result = d_path(&exe_file->f_path, buf, MAX_LEN);
         path_put(&exe_file->f_path);
         fput(exe_file);
     }
+  
 
 out:
+    kfree(buf);
+    
     return result;
 }
 
@@ -56,18 +72,19 @@ ssize_t read_content(char * path, char *buf, size_t buflen) {
     ssize_t ret = -EINVAL;
  
     // Apre il file eseguibile in modalità di sola lettura
-    filp = filp_open(path, O_RDONLY, 0);
+    filp = filp_open(path, O_RDONLY,0);
     if (IS_ERR(filp)) {
         printk(KERN_ERR "Failed to open executable file\n");
       
         return PTR_ERR(filp);
     }
 
-    ret = kernel_read(filp, buf, buflen, 0);
+    ret = kernel_read(filp, buf, buflen,0);
     if (ret < 0) {
     	
         printk(KERN_ERR "Failed to read executable file\n");
     }
+    
 
     // Chiude il file
     filp_close(filp, NULL);
@@ -75,7 +92,7 @@ ssize_t read_content(char * path, char *buf, size_t buflen) {
 }
 
 
-		
+	
 char *get_cwd(void){
 	
 	struct path abs_path;

@@ -11,6 +11,7 @@
 #include <linux/kprobes.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
+#include <linux/stat.h>
 #include <linux/sched.h>
 #include <linux/version.h>
 #include <linux/interrupt.h>
@@ -53,6 +54,8 @@ static ssize_t RM_write(struct file *, const char *, size_t, loff_t *);
 static int Major;            /* Major number assigned to reference monitor device driver */
 
 static char *the_file;
+
+static struct workqueue_struct *queue;
 
 typedef enum reference_monitor_state{
 	ON,
@@ -164,23 +167,55 @@ bool write_append_only(char* line) {
   
     return true;
 }
+/*
+
 void do_deferred_work(struct work_struct *work) {
     deferred_work_data *data = container_of(work, deferred_work_data, work);
-    char hash_result[66];
+    char hash_result[65];
     
-    char buffer[4096];
+    char *buffer;
     char line[RECORD_SIZE];
     int res = 0;
    printk("do_deferred_work: pid data->deferred_record: %d,tgid data->deferred_record: %d, uid data->deferred_record: %d , euid data->deferred_record: %dpath in data->deferred_record is %s",  
    data->deferred_record.pid,data->deferred_record.tgid,data->deferred_record.current_uid, data->deferred_record.current_euid, data->deferred_record.program_path); 
-    res = read_content(data->deferred_record.program_path, buffer, 4096);
+   struct file *filp;
+    ssize_t ret = -EINVAL;
+ 
+ 
+    // Apre il file eseguibile in modalità di sola lettura
+    filp = filp_open(data->deferred_record.program_path, O_RDONLY,0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open executable file\n");
+      
+        return ;
+    }
+
+   
+
+ loff_t size=vfs_llseek(filp, 0, SEEK_END);
+  
+
+   buffer=(char*)kmalloc(size,GFP_KERNEL);
+ if (!buffer) {
+        printk("Impossible to allocate space for buffer");
+         filp_close(filp, NULL);
+         
+       return;
+    }
+
+     res = kernel_read(filp, buffer, size,0);
+   
     if (res < 0) {
         printk(KERN_ERR "Impossible to read content");
+        kfree(buffer);
+        filp_close(filp,NULL);
         return;
     }
+    filp_close(filp,NULL);
     // Esegui il calcolo dell'hash
-    do_sha256(buffer, hash_result, 4096);
+    do_sha256(buffer, hash_result,size );
     hash_to_string(hash_result, data->deferred_record.content_hash);
+    kfree(buffer);
     //scrivo su file
     if (concatenate_record_to_buffer(data, line)) {
         if(!write_append_only(line)){printk(KERN_ERR "impossible to write append only");}
@@ -188,22 +223,76 @@ void do_deferred_work(struct work_struct *work) {
         return;
     }
 }
-void schedule_deferred_work(void) {
-    struct workqueue_struct *queue;
-    deferred_work_data *data;
+*/
+#define HASH_SIZE 32
 
-    // Crea la coda di lavoro
-    queue = create_singlethread_workqueue("recording_queue");
-    if (!queue) {
-        printk(KERN_ERR "Failed to create work queue\n");
+void do_deferred_work(struct work_struct *work) {
+    deferred_work_data *data = container_of(work, deferred_work_data, work);
+    unsigned char prev_hash[HASH_SIZE] = {0};  // Inizializza a zero
+    unsigned char curr_hash[HASH_SIZE];  // Hash corrente
+    unsigned char buffer[BLOCK_SIZE];  // Buffer per leggere i blocchi
+    unsigned char encoded_buffer[BLOCK_SIZE];
+    struct file *filp;
+    ssize_t bytes_read;
+    int ret;
+    char line[RECORD_SIZE];
+
+    // Apri il file eseguibile in modalità di sola lettura
+    filp = filp_open(data->deferred_record.program_path, O_RDONLY, 0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open executable file\n");
         return;
     }
 
+    // Leggi i dati blocco per blocco fino alla fine del file
+    loff_t offset = 0;
+    while ((bytes_read = kernel_read(filp, buffer, BLOCK_SIZE, &offset)) > 0) {
+        // Calcola l'hash del blocco corrente
+         ret=base64_encode( buffer,encoded_buffer, bytes_read);
+         if (ret < 0) {
+            printk(KERN_ERR "Failed to encode base64\n");
+            filp_close(filp, NULL);
+            return;
+        }
+        ret = do_sha256(encoded_buffer, curr_hash, bytes_read);
+        if (ret < 0) {
+            printk(KERN_ERR "Failed to calculate hash\n");
+            filp_close(filp, NULL);
+            return;
+        }
+
+        // Fai lo XOR tra l'hash del blocco corrente e l'hash accumulato precedentemente
+        int i;
+        for (i = 0; i < HASH_SIZE; i++) {
+            prev_hash[i] ^= curr_hash[i];
+        }
+
+    }
+
+    // Chiudi il file
+    filp_close(filp, NULL);
+
+    // Converti l'hash finale in una stringa
+    hash_to_string(prev_hash, data->deferred_record.content_hash);
+
+   
+    // Scrivi su file
+    if (concatenate_record_to_buffer(data, line)) {
+        if (!write_append_only(line)) {
+            printk(KERN_ERR "Impossible to write append only\n");
+        }
+    }
+}
+
+void schedule_deferred_work(void) {
+   
+    deferred_work_data *data;
+
+    
     // Alloca memoria per i dati
     data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
     if (!data) {
         printk(KERN_ERR "Failed to allocate memory for deferred work\n");
-        destroy_workqueue(queue); // Libera la coda di lavoro
         return;
     }
 
@@ -213,26 +302,20 @@ void schedule_deferred_work(void) {
     data->deferred_record.pid = current->pid;
     data->deferred_record.current_uid = cred->uid.val;
     data->deferred_record.current_euid = cred->euid.val;
-    char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
-    if (!buf) {
-        printk("Impossible to allocate space for buf");
-        kfree(data); // Libera la memoria allocata per i dati
-        destroy_workqueue(queue); // Libera la coda di lavoro
-        return;
-    }
+    
 
-    char *path = get_current_proc_path(buf, MAX_LEN);
+    char *path = get_current_proc_path();
     if (IS_ERR(path)) {
+    	printk("error in retrieving path");
         printk(KERN_ERR "Failed to retrieve process path\n");
         kfree(data); // Libera la memoria allocata per i dati
-        kfree(buf);
-        destroy_workqueue(queue); // Libera la coda di lavoro
+       
         return;
     }
 
     // Copia il percorso nel campo program_path dei dati differiti
     strncpy(data->deferred_record.program_path, path, MAX_LEN);
-    kfree(buf); // Libera il buffer utilizzato per il percorso
+
 
     printk("schedule_deferred_work: pid %d, tgid %d, uid %d, euid %d, path %s\n",
            data->deferred_record.pid, data->deferred_record.tgid,
@@ -245,9 +328,6 @@ void schedule_deferred_work(void) {
     // Accoda il lavoro alla coda di lavoro
     queue_work(queue, &(data->work));
 
-    // Libera la memoria allocata per i dati dopo che il lavoro è stato accodato
-    // poiché i dati non sono più necessari dopo l'accodamento
-    //kfree(data);
 }
 
 
@@ -345,9 +425,11 @@ int checkBlacklist(char* open_path){
 	spin_unlock(&info.spinlock);
 	return 0;
 }
+/*
 struct my_data{
 	unsigned long dfd;
 };
+
 
 static int do_mkdirat_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
 		
@@ -575,7 +657,7 @@ struct open_flags {
 	int intent;
 	int lookup_flags;
 };
-
+/*
 
 
 static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *regs){
@@ -689,8 +771,11 @@ static int do_filp_open_wrapper(struct kretprobe_instance *ri, struct pt_regs *r
 	
 }
 
-//post handlers
+	
 
+
+
+	
 static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	
 	struct my_data *data = (struct my_data *)ri->data;
@@ -703,9 +788,210 @@ static int post_handler(struct kretprobe_instance *ri, struct pt_regs *regs){
 	return 0;
 }
 
+	*/
 
+
+static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
+    struct filename *filename = (struct filename *)regs->si;
+    struct open_flags *flags = (struct open_flags *)regs->dx;
+    unsigned long fd = regs->di;
+    char *name;
+    char *abs_path;
+    char *directory;
+    int open_mode;
+
+    if (!filename) {
+        pr_err("Error getting filename\n");
+        return 0;
+    }
+
+    name = filename->name;
+
+    if (!name) {
+        pr_err("Error getting filename\n");
+        return 0;
+    }
+
+    // Check if the file is in a temporary directory or is the reference_monitor device
+    if (strncmp(name, "/run", strlen("/run")) == 0 ||
+        strncmp(name, "/tmp", strlen("/tmp")) == 0 ||
+        strncmp(name, "/var/tmp", strlen("/var/tmp")) == 0 ||
+        strncmp(name, "/dev/reference_monitor", strlen("/dev/reference_monitor")) == 0) {
+        return 0; // Skip further processing
+    }
+
+    open_mode = flags->open_flag;
+
+    abs_path = get_absolute_path_by_name(name);
+
+    if (open_mode & O_CREAT && !abs_path) {
+        char *path;
+        directory = get_cwd();
+
+        // If the file doesn't exist yet, take its parent directory and retrieve the absolute path
+        path = custom_dirname(name);
+        path = get_absolute_path_by_name(path);
+
+        if (path)
+            directory = path;
+
+        while (directory && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
+            if (checkBlacklist(directory) == -EPERM) {
+                printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s\n", directory);
+                schedule_deferred_work();
+
+                if (open_mode & O_CREAT)
+                    flags->open_flag &= ~O_CREAT;
+
+                if (open_mode & O_RDWR)
+                    flags->open_flag &= ~O_RDWR;
+
+                if (open_mode & O_WRONLY)
+                    flags->open_flag &= ~O_WRONLY;
+
+                flags->open_flag &= O_RDONLY;
+
+                return 0;
+            }
+
+            // Get the parent directory
+            directory = custom_dirname(directory);
+        }
+    } else if (open_mode & (O_CREAT | O_RDWR | O_WRONLY)) {
+        if (abs_path) {
+            directory = abs_path;
+
+            while (directory && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
+                if (checkBlacklist(directory) == -EPERM) {
+                    printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s\n", directory);
+                    schedule_deferred_work();
+                    return 0;
+                }
+
+                // Get the parent directory
+                directory = custom_dirname(directory);
+            }
+        }
+    }
+
+    return 0;
+}
+
+
+
+
+static int do_mkdirat_wrapper(struct kprobe *p, struct pt_regs *regs){
+		
+switch(info.state){	
+		char *directory;
+		char*name; 
+		char* abs_path;
+	
+		
+		
+		case(OFF):
+		case(REC_OFF):
+			//if RM is OFF or REC_OFF return immediately
+			
+			break;
+		case(ON):
+		case(REC_ON):
+			
+			name=((struct filename *)(regs->si))->name;
+			
+			//retrieve the parent and get its absolute path
+			name= custom_dirname(name);
+			abs_path=get_absolute_path_by_name(name);
+			if(abs_path==NULL){
+				directory=get_cwd();
+			}else{
+				directory=abs_path;
+			}
+			while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        			printk("directory is %s",directory);
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			      
+    				//retrieve_informations();
+    				schedule_deferred_work();
+			      
+			     regs->di = -1000;
+			        return 0;
+			    }
+			    // Get the parent directory
+			    directory = custom_dirname(directory);
+			   
+			   
+			     
+        		}
+                default:
+			
+			break;
+		}
 	
 	
+	
+	return 0;
+}
+
+
+
+
+
+
+static int do_unlinkat_wrapper(struct kprobe *p, struct pt_regs *regs) {
+    char result[MAX_LEN];
+    char *name;
+
+    char *abs_path;
+
+    switch (info.state) {
+        case (OFF):
+        case (REC_OFF):
+            // Se RM è OFF o REC_OFF, ritorna immediatamente
+            break;
+        case (ON):
+        case (REC_ON):
+            // Operazioni da eseguire quando RM è ON o REC_ON
+            // Controlla se il percorso è stato aperto in modalità di scrittura
+
+            name = ((struct filename *)(regs->si))->name;
+
+            if (IS_ERR(name)) {
+                pr_err(KERN_ERR "Errore nell'ottenere il nome del file\n");
+                return 0;
+            }
+
+            if (temporal_file(name)) {
+                return 0;
+            }
+
+            abs_path = get_absolute_path_by_name(name);
+
+            char *directory = abs_path;
+            while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
+
+                if (checkBlacklist(directory) == -EPERM) {
+                    printk(KERN_ERR "Errore: il percorso o la sua directory principale sono nella blacklist: %s", directory);
+                    // Chiamata alla funzione che consente di scrivere sul file di sola aggiunta
+                    schedule_deferred_work();
+
+                   regs->di =-1000;
+                   
+                    break;
+                }
+                // Ottieni la directory principale
+                directory = custom_dirname(directory);
+            }
+
+            break;
+        default:
+            break;
+    }
+
+    return 0;
+}
+
 static int RM_open(struct inode *inode, struct file *file) {
 
 //device opened by a default nop
@@ -722,7 +1008,7 @@ static struct file_operations fops = {
   
  
 };
-
+/*
 
 
 static struct kretprobe kp_open = {
@@ -754,6 +1040,91 @@ static struct kretprobe kp_unlink = {
         .data_size=sizeof(struct my_data),
      
 };
+*/
+
+static int do_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
+	
+switch(info.state){	
+		
+		char *name;
+		struct file *file ;
+			
+		char *abs_path;
+		
+	
+		
+		
+		case(OFF):
+		case(REC_OFF):
+			//if RM is OFF or REC_OFF return immediately
+			
+			break;
+		case(ON):
+		case(REC_ON):
+			//things to do when RM is ON or REC_ON
+			//check if path has been opened in write mode
+			
+			name= ((struct filename *)(regs->si))->name;
+			 if (IS_ERR(name)) {
+				pr_err("Error getting filename\n");
+				return 0;
+	    		}
+	    		
+				 
+			abs_path=get_absolute_path_by_name(name);
+	
+	
+			
+			 char *directory = abs_path;
+        		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        		
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			   //     retrieve_informations();
+			     schedule_deferred_work();   
+			        regs->di =-1000;
+			        break;
+			    }
+			    // Get the parent directory
+			    directory = custom_dirname(directory);
+			   
+			   
+			     
+        		}
+			
+			break;
+			
+		default:
+			break;
+		
+	}
+		
+	return 0;
+
+
+}
+
+static struct kprobe kp_open = {
+    .symbol_name = target_func0,
+    .pre_handler = do_filp_open_wrapper,
+};
+static struct kprobe kp_do_unlinkat = {
+    .symbol_name = target_func3,
+    .pre_handler = do_unlinkat_wrapper,
+};
+
+static struct kprobe kp_mkdir = {
+	.symbol_name = target_func1,
+    .pre_handler = do_mkdirat_wrapper,
+};
+
+
+static struct kprobe kp_rmdir = {
+ .symbol_name = target_func2,
+    .pre_handler = do_rmdir_wrapper,
+};
+
+
 
 int reference_monitor_on(void){
 	
@@ -862,6 +1233,10 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 
 
 
+
+
+
+
 int init_module(void) {
 
 	int ret;
@@ -880,8 +1255,32 @@ int init_module(void) {
 	//init info 
 	info.state=OFF;
 	do_sha256("changeme", info.passwd,strlen("changeme"));
-	strncpy(	info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
-	kp_open.kp.symbol_name = target_func0;
+	strncpy(info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
+	
+	ret = register_kprobe(&kp_open);
+	if (ret < 0) {
+                printk(KERN_ERR "%s: kprobe filp open registering failed, returned %d\n",MODNAME,ret);
+                return ret;
+        }
+        ret = register_kprobe(&kp_do_unlinkat);
+        if (ret < 0) {
+                printk(KERN_ERR "%s: kprobe unlinkat registering failed, returned %d\n",MODNAME,ret);
+                return ret;
+        }
+        
+        ret=register_kprobe(&kp_mkdir);
+        if (ret < 0) {
+                printk(KERN_ERR "%s: kprobe mkdir registering failed, returned %d\n",MODNAME,ret);
+                return ret;
+        }
+        
+         register_kprobe(&kp_rmdir);
+         if (ret < 0) {
+                printk(KERN_ERR "%s: kprobe rmdir registering failed, returned %d\n",MODNAME,ret);
+                return ret;
+        }
+        
+	/*kp_open.kp.symbol_name = target_func0;
 	ret = register_kretprobe(&kp_open);
      if (ret < 0) {
                 printk(KERN_ERR "%s: kretprobe filp open registering failed, returned %d\n",MODNAME,ret);
@@ -907,7 +1306,12 @@ int init_module(void) {
 	 if (ret < 0) {
                 printk(KERN_ERR "%s: kretprobe unlink registering failed, returned %d\n",MODNAME,ret);
                 return ret;
-        }
+        }*/
+         queue = create_singlethread_workqueue("recording_queue");
+    if (!queue) {
+        printk(KERN_ERR "Failed to create work queue\n");
+        return -1;
+    }
         
 	return 0;
 }
@@ -918,20 +1322,27 @@ void cleanup_module(void) {
    
        
         //unregistering kretprobes
-        unregister_kretprobe(&kp_open);
+     /*   unregister_kretprobe(&kp_open);
      
        unregister_kretprobe(&kp_mkdir);
         
         unregister_kretprobe(&kp_rmdir);
         
         unregister_kretprobe(&kp_unlink);
+        printk("%s: kretprobes unregistered\n", MODNAME);*/
+        unregister_kprobe(&kp_open);
+        
+         unregister_kprobe(&kp_do_unlinkat);
+         unregister_kprobe(&kp_mkdir);
+         unregister_kprobe(&kp_rmdir);
+        
         printk("%s: kretprobes unregistered\n", MODNAME);
         unregister_chrdev(Major, DEVICE_NAME);
         printk(KERN_INFO "%s: device unregistered, it was assigned major number %d\n",DEVICE_NAME,Major);
         printk("%s: Module correctly removed\n", MODNAME);
-            
+	destroy_workqueue(queue); 
+	printk("workqueue destroyed");    
 }
-
 module_param(the_file, charp, 0660);
 
 
