@@ -1,7 +1,7 @@
 #include <linux/string.h>
 #include <linux/fs.h>
 #include <linux/path.h>
-
+#include <linux/user_namespace.h>
 
 
 #define MODNAME "Reference monitor"
@@ -173,4 +173,32 @@ char *custom_dirname(char *path) {
     return parent;
 }
 
+// Create a restricted user namespace
+struct user_namespace *create_restricted_user_ns(void) {
+    struct user_namespace *new_ns;
+    struct cred *new_cred;
+
+    new_ns = kzalloc(sizeof(struct user_namespace), GFP_KERNEL);
+    if (!new_ns) {
+        printk(KERN_ALERT "Failed to allocate memory for user namespace\n");
+        return ERR_PTR(-ENOMEM);
+    }
+
+    // Initialize the user namespace structure
+    *new_ns = (struct user_namespace){
+        .parent = current_user_ns(),
+        .level = current_user_ns()->level + 1,
+        .owner = current_uid(),
+        .group = current_gid(),
+    };
+
+    // Restrict the new user namespace
+    new_ns->uid_map.nr_extents = 0;
+    new_ns->gid_map.nr_extents = 0;
+
+    // Optionally, set other fields to restrict permissions further
+    // new_ns->flags = ...
+
+    return new_ns;
+}
 
