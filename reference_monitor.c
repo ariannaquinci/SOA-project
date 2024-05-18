@@ -33,7 +33,8 @@
 
 #define target_func0 "do_filp_open"
 #define target_func1 "do_mkdirat"
-#define target_func3 "do_unlinkat"
+#define target_func3 "vfs_unlink"
+
 #define target_func2 "vfs_rmdir"
 #define HASH_SIZE 32
 
@@ -575,71 +576,7 @@ static int do_mkdirat_wrapper(struct kprobe *p, struct pt_regs *regs){
 }
 
 
-/*
-
-static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
-
-
-	char result[MAX_LEN];
-    char *name;
-
-    char *abs_path;
-
-	char *buf;
-	
-	 buf = kmalloc(PATH_MAX, GFP_KERNEL);
-	 if(!buf){
-	 	printk(KERN_ERR "Failed to allocate space for buffer");
-        return -ENOMEM;
-	 }
-    // Get the full path of the dentry
-    name =dentry_path_raw(regs->dx, buf, MAX_LEN);
-    printk("name is %s", name);
-    if (!name) {
-        printk(KERN_ALERT "Failed to get dentry path\n");
-        return -ENOMEM;
-    }
-    kfree(buf);
-
-    if (IS_ERR(name)) {
-        pr_err(KERN_ERR "Errore nell'ottenere il nome del file\n");
-        return 0;
-    }
-
-    if (temporal_file(name)) {
-        return 0;
-    }
-
-    abs_path = get_absolute_path_by_name(name);
-
-    char *directory = abs_path;
-    while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
-
-        if (checkBlacklist(directory) == -EPERM) {
-            printk(KERN_ERR "Error path or its parent directory is in blacklist: %s", directory);
-            // Chiamata alla funzione che consente di scrivere sul file di sola aggiunta
-            schedule_deferred_work();
-             if(ns==NULL){
-             
-             	ns=create_restricted_user_ns();
-             }
-           regs->di=ns;
-		
-            break;
-        }
-        // Ottieni la directory principale
-        directory = custom_dirname(directory);
-    }
-
-
-    return 0;
-	
-}
-
-*/
-
-
-static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
+static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 
 
 	char result[MAX_LEN];
@@ -699,7 +636,7 @@ static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
             list_add(&mod_inode->list, &modified_inodes_list);
             
           
-    	//set del flag S_APPEND in dir permette di ottenere errore -EPERM quando vfs_rmdir chiama may_delete
+    	//set del flag S_APPEND in dir permette di ottenere errore -EPERM quando vfs_rmdir o vfs_unlink chiama may_delete
          	dir->i_flags |= S_APPEND;
 		
             break;
@@ -713,49 +650,8 @@ static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
 	
 }
 
-static int do_unlinkat_wrapper(struct kprobe *p, struct pt_regs *regs) {
-    char result[MAX_LEN];
-    char *name;
-
-    char *abs_path;
-
-    // Operazioni da eseguire quando RM è ON o REC_ON
-    // Controlla se il percorso è stato aperto in modalità di scrittura
-
-    name = ((struct filename *)(regs->si))->name;
-
-    if (IS_ERR(name)) {
-        pr_err(KERN_ERR "Errore nell'ottenere il nome del file\n");
-        return 0;
-    }
-
-    if (temporal_file(name)) {
-        return 0;
-    }
-
-    abs_path = get_absolute_path_by_name(name);
-
-    char *directory = abs_path;
-    while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
-
-        if (checkBlacklist(directory) == -EPERM) {
-            printk(KERN_ERR "Error path or its parent directory is in blacklist: %s", directory);
-            // Chiamata alla funzione che consente di scrivere sul file di sola aggiunta
-            schedule_deferred_work();
-              regs->di =-1000;
-           
-		printk("KPROBE:regs->di: %d", regs->di);
-         
-           
-            break;
-        }
-        // Ottieni la directory principale
-        directory = custom_dirname(directory);
-    }
 
 
-    return 0;
-}
 static int RM_open(struct inode *inode, struct file *file) {
 
 //device opened by a default nop
@@ -779,15 +675,15 @@ static struct kprobe kp_open = {
     .pre_handler = do_filp_open_wrapper,
 };
 
-static struct kprobe kp_do_unlinkat = {
+static struct kprobe kp_vfs_unlink = {
     .symbol_name = target_func3,
-    .pre_handler = do_unlinkat_wrapper,
+	.pre_handler=vfs_rm_wrapper,
 };
 
 
 static struct kprobe kp_vfs_rmdir={
 	.symbol_name=target_func2,
-	.pre_handler=vfs_rmdir_wrapper,
+	.pre_handler=vfs_rm_wrapper,
 };
 static struct kprobe kp_mkdir = {
 	.symbol_name = target_func1,
@@ -801,7 +697,7 @@ int reference_monitor_on(void){
 	printk("RM was %d\n", info.state);
 	if(info.state==OFF||info.state==REC_OFF){
 		enable_kprobe(&kp_open);
-	 	enable_kprobe(&kp_do_unlinkat);
+	 	enable_kprobe(&kp_vfs_unlink);
 	 	enable_kprobe(&kp_mkdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
 		info.state=ON;
@@ -814,7 +710,7 @@ int reference_monitor_off(void){
 	printk("RM was %d\n", info.state);
 	if(info.state==ON||info.state==REC_ON){
 		disable_kprobe(&kp_open);
-		disable_kprobe(&kp_do_unlinkat);
+		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
 		 restore_inodes_flags();
@@ -833,7 +729,7 @@ int reference_monitor_rec_off(void){
 	printk("RM was %d\n", info.state);
 	if(info.state==ON||info.state==REC_ON){
 		disable_kprobe(&kp_open);
-		disable_kprobe(&kp_do_unlinkat);
+		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
 		 restore_inodes_flags();
@@ -850,7 +746,7 @@ int reference_monitor_rec_on(void){
 	printk("RM was %d\n", info.state);
 	if(info.state==OFF|info.state==REC_OFF){
 		enable_kprobe(&kp_open);
-	 	enable_kprobe(&kp_do_unlinkat);
+	 	enable_kprobe(&kp_vfs_unlink);
 	 	enable_kprobe(&kp_mkdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
 		info.state=REC_ON;
@@ -958,7 +854,7 @@ int init_module(void) {
                 printk(KERN_ERR "%s: kprobe filp open registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
-        ret = register_kprobe(&kp_do_unlinkat);
+        ret = register_kprobe(&kp_vfs_unlink);
         if (ret < 0) {
                 printk(KERN_ERR "%s: kprobe unlinkat registering failed, returned %d\n",MODNAME,ret);
                 return ret;
@@ -999,7 +895,7 @@ void cleanup_module(void) {
 
         unregister_kprobe(&kp_open);
         
-         unregister_kprobe(&kp_do_unlinkat);
+         unregister_kprobe(&kp_vfs_unlink);
          unregister_kprobe(&kp_mkdir);
         
        unregister_kprobe(&kp_vfs_rmdir);
