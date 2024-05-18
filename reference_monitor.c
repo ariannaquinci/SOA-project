@@ -33,7 +33,6 @@
 
 #define target_func0 "do_filp_open"
 #define target_func1 "do_mkdirat"
-//#define target_func2 "do_rmdir"
 #define target_func3 "do_unlinkat"
 #define target_func2 "vfs_rmdir"
 #define HASH_SIZE 32
@@ -43,7 +42,9 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Arianna Quinci");
 MODULE_DESCRIPTION("see the README file");
 
-
+static char *the_file = NULL;
+module_param(the_file, charp, 0660);
+MODULE_PARM_DESC(the_file, "Path to the file");
 
 #define DEVICE_NAME "/dev/reference_monitor"  /* Device file name in /dev/ */
 
@@ -74,12 +75,48 @@ typedef struct reference_monitor_info{
 	char passwd[33]; 
 	char blacklist[MAX_PATHS][MAX_LEN];
 	int pos;
+	
 	spinlock_t spinlock; 
 }RM_info;
 
 static RM_info info;
 
+struct modified_inode {
+    struct inode *inode;
+    unsigned long original_flags;
+    struct list_head list;
+     struct dentry *dentry;
+     char blacklisted[MAX_LEN];
+};
+static LIST_HEAD(modified_inodes_list);
 
+static void restore_inodes_flags(void) {
+    struct modified_inode *entry, *tmp;
+
+    list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
+        entry->inode->i_flags = entry->original_flags;
+        
+        list_del(&entry->list);
+        kfree(entry);
+    }
+}
+
+
+static void restore_inode_flags_by_path(const char *path) {
+    struct modified_inode *entry, *tmp;
+    char buf[MAX_LEN];
+
+    list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
+    //    char *inode_path = dentry_path_raw(entry->dentry, buf, MAX_LEN); 
+    char *black_path=entry->blacklisted;
+        printk("inode_path is: %s, while abs path is: %s", black_path, path);
+        if (strcmp(black_path, path) == 0) {
+            entry->inode->i_flags = entry->original_flags;
+            list_del(&entry->list);
+            kfree(entry);
+        }
+    }
+}
 
 bool check_passwd(char* pw){
 	printk("checking pw");
@@ -115,7 +152,6 @@ int RM_change_pw(char *new){
 	return 0;
 }
 struct record{
-	
 	pid_t tgid;	//group identifier
 	pid_t pid;	//thread identifier
 	uid_t current_uid;
@@ -345,6 +381,7 @@ int RM_remove_path(char * path){
 				
 				
 			}
+			restore_inode_flags_by_path(abs_path);
 			spin_unlock(&info.spinlock);
 			return 0;
 		}
@@ -601,48 +638,7 @@ static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
 
 */
 
-struct my_inode_operations {
-	struct dentry * (*lookup) (struct inode *,struct dentry *, unsigned int);
-	const char * (*get_link) (struct dentry *, struct inode *, struct delayed_call *);
-	int (*permission) (struct mnt_idmap *, struct inode *, int);
-	struct posix_acl * (*get_inode_acl)(struct inode *, int, bool);
 
-	int (*readlink) (struct dentry *, char __user *,int);
-
-	int (*create) (struct mnt_idmap *, struct inode *,struct dentry *,
-		       umode_t, bool);
-	int (*link) (struct dentry *,struct inode *,struct dentry *);
-	int (*unlink) (struct inode *,struct dentry *);
-	int (*symlink) (struct mnt_idmap *, struct inode *,struct dentry *,
-			const char *);
-	int (*mkdir) (struct mnt_idmap *, struct inode *,struct dentry *,
-		      umode_t);
-	int (*rmdir) (struct inode *,struct dentry *);
-	int (*mknod) (struct mnt_idmap *, struct inode *,struct dentry *,
-		      umode_t,dev_t);
-	int (*rename) (struct mnt_idmap *, struct inode *, struct dentry *,
-			struct inode *, struct dentry *, unsigned int);
-	int (*setattr) (struct mnt_idmap *, struct dentry *, struct iattr *);
-	int (*getattr) (struct mnt_idmap *, const struct path *,
-			struct kstat *, u32, unsigned int);
-	ssize_t (*listxattr) (struct dentry *, char *, size_t);
-	int (*fiemap)(struct inode *, struct fiemap_extent_info *, u64 start,
-		      u64 len);
-	int (*update_time)(struct inode *, int);
-	int (*atomic_open)(struct inode *, struct dentry *,
-			   struct file *, unsigned open_flag,
-			   umode_t create_mode);
-	int (*tmpfile) (struct mnt_idmap *, struct inode *,
-			struct file *, umode_t);
-	struct posix_acl *(*get_acl)(struct mnt_idmap *, struct dentry *,
-				     int);
-	int (*set_acl)(struct mnt_idmap *, struct dentry *,
-		       struct posix_acl *, int);
-	int (*fileattr_set)(struct mnt_idmap *idmap,
-			    struct dentry *dentry, struct fileattr *fa);
-	int (*fileattr_get)(struct dentry *dentry, struct fileattr *fa);
-	struct offset_ctx *(*get_offset_ctx)(struct inode *inode);
-} ;
 static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
 
 
@@ -652,7 +648,8 @@ static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
     char *abs_path;
 
 	char *buf;
-	
+	struct dentry *dentry;
+	dentry = (struct dentry *)regs->dx; 
 	 buf = kmalloc(PATH_MAX, GFP_KERNEL);
 	 if(!buf){
 	 	printk(KERN_ERR "Failed to allocate space for buffer");
@@ -685,8 +682,23 @@ static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
             printk(KERN_ERR "Error path or its parent directory is in blacklist: %s", directory);
             // Chiamata alla funzione che consente di scrivere sul file di sola aggiunta
             schedule_deferred_work();
+            struct inode *dir =(struct inode*)(regs->si);
+            // Save the original flags and add the inode to the list of modified inodes
+            struct modified_inode *mod_inode = kmalloc(sizeof(*mod_inode), GFP_KERNEL);
+            if (!mod_inode) {
+                printk(KERN_ERR "Failed to allocate space for modified_inode");
+                return -ENOMEM;
+            }
+           mod_inode->inode = dir;
+            mod_inode->dentry = dentry; // Memorizza la dentry
             
-           struct inode *dir =(struct inode*)(regs->si);
+             strncpy(mod_inode->blacklisted, directory, sizeof(mod_inode->blacklisted));
+            printk("blacklisted set to %s", mod_inode->blacklisted);
+            mod_inode->original_flags = dir->i_flags;
+           
+            list_add(&mod_inode->list, &modified_inodes_list);
+            
+          
     	//set del flag S_APPEND in dir permette di ottenere errore -EPERM quando vfs_rmdir chiama may_delete
          	dir->i_flags |= S_APPEND;
 		
@@ -700,7 +712,6 @@ static int vfs_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
     return 0;
 	
 }
-
 
 static int do_unlinkat_wrapper(struct kprobe *p, struct pt_regs *regs) {
     char result[MAX_LEN];
@@ -745,7 +756,6 @@ static int do_unlinkat_wrapper(struct kprobe *p, struct pt_regs *regs) {
 
     return 0;
 }
-
 static int RM_open(struct inode *inode, struct file *file) {
 
 //device opened by a default nop
@@ -764,57 +774,6 @@ static struct file_operations fops = {
 };
 
 
-
-/*
-static int do_rmdir_wrapper(struct kprobe *p, struct pt_regs *regs){
-	
-		
-		char *name;
-		struct file *file ;
-			
-		char *abs_path;
-		
-	
-		
-			//things to do when RM is ON or REC_ON
-			//check if path has been opened in write mode
-			
-			name= ((struct filename *)(regs->si))->name;
-			 if (IS_ERR(name)) {
-				pr_err("Error getting filename\n");
-				return 0;
-	    		}
-	    		
-				 
-			abs_path=get_absolute_path_by_name(name);
-	
-	
-			
-			 char *directory = abs_path;
-        		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-        		
-			   if (checkBlacklist(directory) == -EPERM ) {
-			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			   //     retrieve_informations();
-			     schedule_deferred_work();   
-			        regs->di =-1000;
-			        break;
-			    }
-			    // Get the parent directory
-			    directory = custom_dirname(directory);
-			   
-			   
-			     
-        		}
-			
-		
-	return 0;
-
-
-}*/
-
-
-
 static struct kprobe kp_open = {
     .symbol_name = target_func0,
     .pre_handler = do_filp_open_wrapper,
@@ -825,30 +784,17 @@ static struct kprobe kp_do_unlinkat = {
     .pre_handler = do_unlinkat_wrapper,
 };
 
+
 static struct kprobe kp_vfs_rmdir={
 	.symbol_name=target_func2,
 	.pre_handler=vfs_rmdir_wrapper,
 };
-
 static struct kprobe kp_mkdir = {
 	.symbol_name = target_func1,
     .pre_handler = do_mkdirat_wrapper,
 };
 
-/*
-static struct kprobe kp_rmdir = {
- .symbol_name = target_func2,
-    .pre_handler = do_rmdir_wrapper,
-};
 
-
-static struct kretprobe kp_ret_unlink = {
-        .handler = post_handler,
-        .entry_handler = pre_handler,
-        .data_size=sizeof(struct my_data),
-        .kp={.symbol_name=target_func3,},
-     
-};*/
 
 int reference_monitor_on(void){
 	spin_lock(&info.spinlock);
@@ -857,7 +803,6 @@ int reference_monitor_on(void){
 		enable_kprobe(&kp_open);
 	 	enable_kprobe(&kp_do_unlinkat);
 	 	enable_kprobe(&kp_mkdir);
-	 	//enable_kprobe(&kp_rmdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
 		info.state=ON;
 		printk("RM is %d\n", info.state);}
@@ -870,13 +815,15 @@ int reference_monitor_off(void){
 	if(info.state==ON||info.state==REC_ON){
 		disable_kprobe(&kp_open);
 		disable_kprobe(&kp_do_unlinkat);
-		//disable_kprobe(&kp_rmdir);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
+		 restore_inodes_flags();
 		info.state=OFF;
 		printk("RM is %d\n", info.state);
 	}
 	spin_unlock(&info.spinlock);
+	printk("RM is %d\n", info.state);
+	
 	return 0;
 	
 }
@@ -887,9 +834,9 @@ int reference_monitor_rec_off(void){
 	if(info.state==ON||info.state==REC_ON){
 		disable_kprobe(&kp_open);
 		disable_kprobe(&kp_do_unlinkat);
-		//disable_kprobe(&kp_rmdir);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
+		 restore_inodes_flags();
 		info.state=REC_OFF;
 		printk("RM is %d\n", info.state);
 	}
@@ -905,7 +852,6 @@ int reference_monitor_rec_on(void){
 		enable_kprobe(&kp_open);
 	 	enable_kprobe(&kp_do_unlinkat);
 	 	enable_kprobe(&kp_mkdir);
-	 	//enable_kprobe(&kp_rmdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
 		info.state=REC_ON;
 		printk("RM is %d\n", info.state);}
@@ -936,9 +882,7 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 	}
   	
 	kfree(buffer);
-  	if(check_passwd(args[2])){
-		
-		
+  	if(check_passwd(args[2])){	
 		if(strcmp(args[0],"new_state")==0){
 			if(strcmp(args[1],"ON")==0){
 					
@@ -977,7 +921,6 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 			}
 		
 		return len;
-		
 	
 	}
 	printk(KERN_ERR "wrong password passed: %s", args[2]);
@@ -1007,8 +950,6 @@ int init_module(void) {
 	}
 	printk("major number is: %d", Major);
 	
-	//init info 
-	//info.state=OFF;
 	do_sha256("changeme", info.passwd,strlen("changeme"));
 	strncpy(info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
 	
@@ -1029,21 +970,14 @@ int init_module(void) {
                 return ret;
         }
         
-      /*   register_kprobe(&kp_rmdir);
-         if (ret < 0) {
-                printk(KERN_ERR "%s: kprobe rmdir registering failed, returned %d\n",MODNAME,ret);
-                return ret;
-        }*/
-        
-        register_kprobe(&kp_vfs_rmdir);
+  
+       register_kprobe(&kp_vfs_rmdir);
          if (ret < 0) {
                 printk(KERN_ERR "%s: kprobe rmdir registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
         
        
-  
-        
         reference_monitor_off();
         
 	
@@ -1067,9 +1001,8 @@ void cleanup_module(void) {
         
          unregister_kprobe(&kp_do_unlinkat);
          unregister_kprobe(&kp_mkdir);
-        // unregister_kprobe(&kp_rmdir);
         
-         unregister_kprobe(&kp_vfs_rmdir);
+       unregister_kprobe(&kp_vfs_rmdir);
         
         printk("%s: kprobes unregistered\n", MODNAME);
         unregister_chrdev(Major, DEVICE_NAME);
@@ -1078,6 +1011,6 @@ void cleanup_module(void) {
 	destroy_workqueue(queue); 
 	printk("workqueue destroyed");    
 }
-module_param(the_file, charp, 0660);
+
 
 
