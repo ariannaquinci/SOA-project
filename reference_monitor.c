@@ -92,13 +92,14 @@ static spinlock_t list_lock;
 
 static void restore_inodes_flags(void) {
     struct modified_inode *entry, *tmp;
-
+	spin_lock(&list_lock);
     list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
         entry->inode->i_flags = entry->original_flags;
         entry->inode->i_mode=entry->original_mode;
         list_del(&entry->list);
         kfree(entry);
     }
+    spin_unlock(&list_lock);
 }
 
 
@@ -107,7 +108,6 @@ static void restore_inode_flags_by_path(const char *path) {
     char buf[MAX_LEN];
 	printk("restoring flags for path %s", path);
     list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
-    //    char *inode_path = dentry_path_raw(entry->dentry, buf, MAX_LEN); 
     	char *black_path=entry->blacklisted;
          printk("inode_path is: %s, while abs path is: %s", black_path, path);
         if (strcmp(black_path, path) == 0) {
@@ -405,12 +405,14 @@ int checkBlacklist(char* open_path){
 	}
 	
 	int i;
+	spin_lock(&info.spinlock);
 	for(i=1; i<=info.pos; i++){
 		if(strcmp(info.blacklist[i], open_path)==0){
-			
+			spin_unlock(&info.spinlock);
 			return -EPERM;
 		}
 	}
+	spin_unlock(&info.spinlock);
 
 	return 0;
 }
@@ -729,11 +731,6 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 			dir->i_flags |= S_APPEND;
 			spin_unlock(&list_lock);
 	
-         
-         
-            
-            
-          
 		return 0;
         }
         // Ottieni la directory principale
@@ -782,77 +779,58 @@ static struct kprobe kp_vfs_rmdir={
 };
 static struct kprobe kp_mkdir = {
 	.symbol_name = target_func1,
-    .pre_handler = vfs_mkdir_wrapper,
+       .pre_handler = vfs_mkdir_wrapper,
 };
 
-
-
-int reference_monitor_on(void){
+void modify_state(enum reference_monitor_state state){
+	printk("into modify state");
 	spin_lock(&info.spinlock);
-	printk("RM was %d\n", info.state);
-	if(info.state==OFF||info.state==REC_OFF){
+	printk("state is %d", info.state);
+	if((info.state==OFF||info.state==REC_OFF) && (state==REC_ON ||state==ON )){
+		
 		enable_kprobe(&kp_open);
 	 	enable_kprobe(&kp_vfs_unlink);
 	 	enable_kprobe(&kp_mkdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
 		
-		printk("RM is %d\n", info.state);}
-	info.state=ON;
-	spin_unlock(&info.spinlock);
-	return 0;
-}
-int reference_monitor_off(void){
-	spin_lock(&info.spinlock);
-	printk("RM was %d\n", info.state);
-	if(info.state==ON||info.state==REC_ON){
+		
+	}
+	else if((info.state==ON||info.state==REC_ON) && (state==REC_OFF ||state==OFF)){
 		disable_kprobe(&kp_open);
 		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
-		spin_lock(&list_lock);
-		 restore_inodes_flags();
-		spin_unlock(&list_lock);
-		printk("RM is %d\n", info.state);
 	}
-	info.state=OFF;
+	info.state=state;
+	
+	printk("state is %d", info.state);
 	spin_unlock(&info.spinlock);
-	printk("RM is %d\n", info.state);
+}
+
+int reference_monitor_on(void){
+	modify_state(ON);
+	return 0;
+}
+int reference_monitor_off(void){
+	
+	modify_state(OFF);
+	restore_inodes_flags();
+	
 	
 	return 0;
 	
 }
 
 int reference_monitor_rec_off(void){
-	spin_lock(&info.spinlock);
-	printk("RM was %d\n", info.state);
-	if(info.state==ON||info.state==REC_ON){
-		disable_kprobe(&kp_open);
-		disable_kprobe(&kp_vfs_unlink);
-		disable_kprobe(&kp_vfs_rmdir);
-		disable_kprobe(&kp_mkdir);
-		spin_lock(&list_lock);
-		 restore_inodes_flags();
-		spin_unlock(&list_lock);
-		printk("RM is %d\n", info.state);
-	}
-	info.state=REC_OFF;
-	spin_unlock(&info.spinlock);
+	modify_state(REC_OFF);
+	restore_inodes_flags();
+		
 	return 0;
 	
 }
 
 int reference_monitor_rec_on(void){
-	spin_lock(&info.spinlock);
-	printk("RM was %d\n", info.state);
-	if(info.state==OFF|info.state==REC_OFF){
-		enable_kprobe(&kp_open);
-	 	enable_kprobe(&kp_vfs_unlink);
-	 	enable_kprobe(&kp_mkdir);
-	 	enable_kprobe(&kp_vfs_rmdir);
-		
-		printk("RM is %d\n", info.state);}
-	info.state=REC_ON;
-	spin_unlock(&info.spinlock);
+	modify_state(REC_ON);
 	return 0;
 }
 
@@ -924,11 +902,6 @@ static ssize_t RM_write(struct file *f, const char *buff, size_t len, loff_t *of
 
 	return -1;
 }
-
-
-
-
-
 
 
 
