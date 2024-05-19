@@ -94,7 +94,7 @@ ssize_t read_content(char * path, char *buf, size_t buflen) {
 
 	
 char *get_cwd(void){
-	
+	printk("into get_cwd");
 	struct path abs_path;
     	char *buf;
     	
