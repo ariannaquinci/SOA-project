@@ -88,6 +88,7 @@ struct modified_inode {
      char blacklisted[MAX_LEN];
 };
 static LIST_HEAD(modified_inodes_list);
+static spinlock_t list_lock;
 
 static void restore_inodes_flags(void) {
     struct modified_inode *entry, *tmp;
@@ -107,9 +108,10 @@ static void restore_inode_flags_by_path(const char *path) {
 	printk("restoring flags for path %s", path);
     list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
     //    char *inode_path = dentry_path_raw(entry->dentry, buf, MAX_LEN); 
-    char *black_path=entry->blacklisted;
-        printk("inode_path is: %s, while abs path is: %s", black_path, path);
+    	char *black_path=entry->blacklisted;
+         printk("inode_path is: %s, while abs path is: %s", black_path, path);
         if (strcmp(black_path, path) == 0) {
+           printk("equals");
             entry->inode->i_flags = entry->original_flags;
             entry->inode->i_mode=entry->original_mode;
             list_del(&entry->list);
@@ -381,7 +383,9 @@ int RM_remove_path(char * path){
 				
 				
 			}
+			spin_lock(&list_lock);
 			restore_inode_flags_by_path(abs_path);
+			spin_unlock(&list_lock);
 			spin_unlock(&info.spinlock);
 			return 0;
 		}
@@ -394,7 +398,7 @@ int RM_remove_path(char * path){
 
 int checkBlacklist(char* open_path){
 	//checking blacklist
-	spin_lock(&info.spinlock);
+	
 	if (open_path==NULL){
 	
 		return -1;
@@ -403,11 +407,11 @@ int checkBlacklist(char* open_path){
 	int i;
 	for(i=1; i<=info.pos; i++){
 		if(strcmp(info.blacklist[i], open_path)==0){
-			spin_unlock(&info.spinlock);
+			
 			return -EPERM;
 		}
 	}
-	spin_unlock(&info.spinlock);
+
 	return 0;
 }
 
@@ -549,7 +553,7 @@ void set_inode_read_only(struct inode *inode) {
 }
 
 int save_original_flags(struct inode *inode, char *directory){
-
+	printk("saving flags");
 			
 		// Save the original flags and add the inode to the list of modified inodes
 		struct modified_inode *mod_inode = kmalloc(sizeof(*mod_inode), GFP_KERNEL);
@@ -557,71 +561,107 @@ int save_original_flags(struct inode *inode, char *directory){
 			printk(KERN_ERR "Failed to allocate space for modified_inode");
 			return -ENOMEM;
 		}
-		mod_inode->inode = inode;
 		
-		strncpy(mod_inode->blacklisted, directory, sizeof(mod_inode->blacklisted));
-		printk("blacklisted set to %s", mod_inode->blacklisted);
+		
+		 int ret = strscpy(mod_inode->blacklisted, directory, sizeof(mod_inode->blacklisted));
+		    if (ret < 0) {
+			printk(KERN_ERR "Failed to copy directory path to blacklisted");
+			kfree(mod_inode);
+			return ret;
+		    }
+				printk("blacklisted set to %s", mod_inode->blacklisted);
 		mod_inode->original_flags = inode->i_flags;
 		mod_inode->original_mode = inode->i_mode;
-
+		mod_inode->inode = inode;
 		list_add(&mod_inode->list, &modified_inodes_list);
 		return 0;
 			
 }
 
+
 static int vfs_mkdir_wrapper(struct kprobe *p, struct pt_regs *regs){
-	printk("into vfs_mkdir wrapper");
-	struct dentry * dentry= (struct dentry*)regs->dx;
-	struct inode* inode=(struct inode*)regs->si;
-	char *directory;
-	char*name; 
-	char* abs_path;
-	
-	
-	
-	abs_path=get_absolute_path_by_name(dentry->d_name.name);
-	printk("dentry->d_name.name is %s", dentry->d_name.name);
-	printk("abs path is %s", abs_path);
-	if(abs_path==NULL){
-		printk("abs path null");
-		directory=get_cwd();
-		printk("back from get_cwd");
-		printk("directory is: %s", directory);
-	}else{
-		
-		directory=abs_path;
-	}
-	
-	while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {	
-		if (checkBlacklist(directory) == -EPERM) {
-		    printk(KERN_ERR "Error path or its parent directory is in blacklist: %s", directory);
-		   
-		    schedule_deferred_work();
-		      struct modified_inode *entry, *tmp;
-		    list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
-		   	char *black_path=entry->blacklisted;
-			printk("inode_path is: %s, while abs path is: %s", black_path, directory);
-			if (strcmp(black_path, directory) == 0) {
-			 	 set_inode_read_only(inode);
-			 	 //se i flag sono già stati salvati da altre chiamate setto semplicemente il nuovo flag 
-			 	 return 0; 
-			}
-		    }
-		    
-			save_original_flags(inode, directory);
-			set_inode_read_only(inode);
+    printk("into vfs_mkdir wrapper");
+    struct dentry *dentry = (struct dentry *)regs->dx;
+    struct inode *inode = (struct inode *)regs->si;
+    char *directory;
+    char *name;
+    char *abs_path;
+    char *buf;
+    char *full_path;
 
-		   
-		    return 0;
-		}
-        	directory = custom_dirname(directory);
-        
-        
+    buf = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!buf) {
+        printk(KERN_ERR "Failed to allocate space for buffer");
+        return -ENOMEM;
+    }
+
+    // Get the full path of the dentry
+    name = dentry_path_raw(dentry, buf, PATH_MAX);
+    if (IS_ERR(name)) {
+        printk(KERN_ERR "Failed to get dentry path");
+        kfree(buf);
+        return PTR_ERR(name);
+    }
+
+    // Allocate buffer for full path
+    full_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!full_path) {
+        printk(KERN_ERR "Failed to allocate space for full path");
+        kfree(buf);
+        return -ENOMEM;
+    }
+
+    // Combine the current directory path with the new directory name
+    snprintf(full_path, MAX_LEN, "%s/%s", name, dentry->d_name.name);
+
+    printk("dentry->d_name.name is %s", dentry->d_name.name);
+    printk("abs path is %s", full_path);
+
+    if (full_path == NULL) {
+        printk("abs path null");
+        kfree(buf);
+        kfree(full_path);
+        return -ENOMEM;
+    }
+
+    directory = full_path;
+
+    while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
+        if (checkBlacklist(directory) == -EPERM) {
+            printk(KERN_ERR "Error path or its parent directory is in blacklist: %s", directory);
+
+            schedule_deferred_work();
+            struct modified_inode *entry, *tmp;
+            spin_lock(&list_lock);
+            list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
+                char *black_path = entry->blacklisted;
+                printk("inode_path is: %s, while abs path is: %s", black_path, directory);
+                if (strcmp(black_path, directory) == 0) {
+                    set_inode_read_only(inode);
+                    spin_unlock(&list_lock);
+                    // Se i flag sono già stati salvati da altre chiamate setto semplicemente il nuovo flag
+                    kfree(buf);
+                    kfree(full_path);
+                    return 0;
+                }
+            }
+
+            save_original_flags(inode, directory);
+
+            set_inode_read_only(inode);
+            spin_unlock(&list_lock);
+
+            kfree(buf);
+            kfree(full_path);
+            return 0;
         }
-	return 0;
-		
-}
+        directory = custom_dirname(directory);
+    }
 
+    kfree(buf);
+    kfree(full_path);
+    return 0;
+}
 
 static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 
@@ -671,6 +711,7 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 		    
 		    
 		      struct modified_inode *entry, *tmp;
+		      spin_lock(&list_lock);
 		    list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
 		    //    char *inode_path = dentry_path_raw(entry->dentry, buf, MAX_LEN); 
 		    	char *black_path=entry->blacklisted;
@@ -678,13 +719,15 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 			if (strcmp(black_path, directory) == 0) {
 			 	 dir->i_flags |= S_APPEND;
 			 	 //se i flag sono già stati salvati da altre chiamate setto semplicemente il nuovo flag 
+			 	 spin_unlock(&list_lock);
 			 	 return 0; 
 			}
 		    }
 		    
 			save_original_flags(dir, directory);
-			dir->i_flags |= S_APPEND;
 			
+			dir->i_flags |= S_APPEND;
+			spin_unlock(&list_lock);
 	
          
          
@@ -752,8 +795,9 @@ int reference_monitor_on(void){
 	 	enable_kprobe(&kp_vfs_unlink);
 	 	enable_kprobe(&kp_mkdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
-		info.state=ON;
+		
 		printk("RM is %d\n", info.state);}
+	info.state=ON;
 	spin_unlock(&info.spinlock);
 	return 0;
 }
@@ -765,10 +809,12 @@ int reference_monitor_off(void){
 		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
+		spin_lock(&list_lock);
 		 restore_inodes_flags();
-		info.state=OFF;
+		spin_unlock(&list_lock);
 		printk("RM is %d\n", info.state);
 	}
+	info.state=OFF;
 	spin_unlock(&info.spinlock);
 	printk("RM is %d\n", info.state);
 	
@@ -784,10 +830,12 @@ int reference_monitor_rec_off(void){
 		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
+		spin_lock(&list_lock);
 		 restore_inodes_flags();
-		info.state=REC_OFF;
+		spin_unlock(&list_lock);
 		printk("RM is %d\n", info.state);
 	}
+	info.state=REC_OFF;
 	spin_unlock(&info.spinlock);
 	return 0;
 	
@@ -801,8 +849,9 @@ int reference_monitor_rec_on(void){
 	 	enable_kprobe(&kp_vfs_unlink);
 	 	enable_kprobe(&kp_mkdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
-		info.state=REC_ON;
+		
 		printk("RM is %d\n", info.state);}
+	info.state=REC_ON;
 	spin_unlock(&info.spinlock);
 	return 0;
 }
