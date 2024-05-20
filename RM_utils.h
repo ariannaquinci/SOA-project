@@ -23,49 +23,41 @@ size_t my_min(size_t a , size_t b){
 	}
 	return a;
 }
-
-
-
-char *get_current_proc_path(void ){
-
-	 char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
+char *get_current_proc_path(void) {
+    char *buf = kmalloc(MAX_LEN, GFP_KERNEL);
     if (!buf) {
         printk("Impossible to allocate space for buf");
-       
-      return ERR_PTR(-ENOMEM);
+        return ERR_PTR(-ENOMEM);
     }
-    struct file *exe_file;
-    char *result;
-    struct mm_struct *mm;
-    mm = get_task_mm(current);
+
+    struct file *exe_file = NULL;
+    char *result = NULL;
+    struct mm_struct *mm = get_task_mm(current);
     if (!mm) {
-    	printk("INTO if (!mm)");
-    	
-    	result=   ERR_PTR(-ENOENT);
-        goto out;
+        printk("Failed to get mm_struct");
+        kfree(buf);
+        return ERR_PTR(-ENOENT);
     }
+
     mmap_read_lock(mm);
     exe_file = mm->exe_file;
     if (exe_file) {
-    
         get_file(exe_file);
         path_get(&exe_file->f_path);
     }
-      mmap_read_unlock(mm);
+    mmap_read_unlock(mm);
     mmput(mm);
+
     if (exe_file) {
         result = d_path(&exe_file->f_path, buf, MAX_LEN);
         path_put(&exe_file->f_path);
         fput(exe_file);
     }
-  
 
-out:
     kfree(buf);
-    
+
     return result;
 }
-
 
 ssize_t read_content(char * path, char *buf, size_t buflen) {
     struct file *filp;
