@@ -492,10 +492,10 @@ static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
 
    
     abs_path = get_absolute_path_by_name(name);
-    spin_lock(&RM_lock); 
-    if (open_mode & O_CREAT && !abs_path) {
-    	
-        char *path;
+ 
+    
+    if(!abs_path){
+    	 char *path;
         directory = get_cwd();
 
         // If the file doesn't exist yet, take its parent directory and retrieve the absolute path
@@ -504,8 +504,13 @@ static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
 
         if (path)
             directory = path;
- 	
-        while (directory && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
+    }
+    else{
+    	directory=abs_path;
+    }
+    spin_lock(&RM_lock);
+
+    while (directory && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
                
             if (checkBlacklist(directory) == -EPERM) {
                 printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s\n", directory);
@@ -520,7 +525,7 @@ static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
                 if (open_mode & O_WRONLY)
                     flags->open_flag &= ~O_WRONLY;
 
-                flags->open_flag &= O_RDONLY;
+                flags->open_flag |= O_RDONLY;
 		 spin_unlock(&RM_lock);
                 return 0;
             }
@@ -530,30 +535,6 @@ static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
              
         }
         
-        
-    } else if (open_mode & (O_CREAT | O_RDWR | O_WRONLY)) {
-    	
-        if (abs_path) {
-            directory = abs_path;
-		
-            while (directory && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
-            	  
-                if (checkBlacklist(directory) == -EPERM) {
-                    printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s\n", directory);
-                    schedule_deferred_work();
-                     spin_unlock(&RM_lock);
-                    return 0;
-                }
-
-                // Get the parent directory
-                directory = custom_dirname(directory);
-                
-            }
-              
-            
-         
-        }
-    }
 	spin_unlock(&RM_lock); 
     return 0;
 }
