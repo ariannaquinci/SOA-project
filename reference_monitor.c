@@ -92,14 +92,13 @@ static spinlock_t list_lock;
 
 static void restore_inodes_flags(void) {
     struct modified_inode *entry, *tmp;
-	spin_lock(&list_lock);
+  
     list_for_each_entry_safe(entry, tmp, &modified_inodes_list, list) {
         entry->inode->i_flags = entry->original_flags;
         entry->inode->i_mode=entry->original_mode;
         list_del(&entry->list);
         kfree(entry);
     }
-    spin_unlock(&list_lock);
 }
 
 
@@ -796,6 +795,7 @@ void modify_state(enum reference_monitor_state state){
 		
 	}
 	else if((info.state==ON||info.state==REC_ON) && (state==REC_OFF ||state==OFF)){
+		restore_inodes_flags();
 		disable_kprobe(&kp_open);
 		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
@@ -805,6 +805,7 @@ void modify_state(enum reference_monitor_state state){
 	
 	printk("state is %d", info.state);
 	spin_unlock(&info.spinlock);
+	
 }
 
 int reference_monitor_on(void){
@@ -814,8 +815,6 @@ int reference_monitor_on(void){
 int reference_monitor_off(void){
 	
 	modify_state(OFF);
-	restore_inodes_flags();
-	
 	
 	return 0;
 	
@@ -823,7 +822,7 @@ int reference_monitor_off(void){
 
 int reference_monitor_rec_off(void){
 	modify_state(REC_OFF);
-	restore_inodes_flags();
+	
 		
 	return 0;
 	

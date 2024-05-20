@@ -7,7 +7,7 @@
 #include <time.h>
 
 #define DEVICE_PATH "/dev/reference_monitor" // Percorso del dispositivo nel sistema
-#define NUM_THREADS 10
+#define NUM_THREADS 5
 
 const char *states[] = {"ON", "REC_ON", "REC_OFF", "OFF"};
 
@@ -22,7 +22,8 @@ void *perform_operation(void *args) {
         perror("Failed to open the device");
         pthread_exit(NULL);
     }
-	printf("Thread %ld: %s\n",pthread_self(), operation);
+
+    printf("Thread %ld: %s\n", pthread_self(), operation);
     bytes_written = write(fd, operation, strlen(operation));
     
     if (bytes_written < 0) {
@@ -32,26 +33,34 @@ void *perform_operation(void *args) {
     // Chiudi il dispositivo
     close(fd);
 
+    // Libera la memoria allocata per operation
+    free(operation);
+
     pthread_exit(NULL);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     pthread_t threads[NUM_THREADS];
     int i;
 
     // Inizializza il generatore di numeri casuali con un seed diverso per ogni esecuzione
     srand(time(NULL));
- char password[20];
-        printf("insert password to run the test\n");
-        fgets(password, sizeof(password), stdin);
-         // Rimuovi il newline inserito da fgets
+    char password[20];
+    printf("Insert password to run the test\n");
+    fgets(password, sizeof(password), stdin);
+    // Rimuovi il newline inserito da fgets
     password[strcspn(password, "\n")] = 0;
+
     for (i = 0; i < NUM_THREADS; i++) {
-        // Crea la stringa operation per ogni thread
-        char operation[100];
-       
+        // Crea la stringa operation per ogni thread e alloca memoria dinamicamente
+        char *operation = malloc(100 * sizeof(char));
+        if (operation == NULL) {
+            perror("Failed to allocate memory");
+            exit(EXIT_FAILURE);
+        }
+
         sprintf(operation, "%s %s %s", "new_state", states[rand() % 4], password);
-        
+
         pthread_create(&threads[i], NULL, perform_operation, (void *)operation);
     }
 
