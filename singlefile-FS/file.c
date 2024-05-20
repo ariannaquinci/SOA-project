@@ -129,9 +129,10 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
    
     struct buffer_head *bh = NULL;
     struct inode * inode = filp->f_inode;
+    spin_lock(&lock_log);
     i_size_write(inode, inode->i_size);
     
-        spin_lock(&lock_log);
+    
     off = i_size_read(inode); 
 	
     //determine the block level offset for the operation

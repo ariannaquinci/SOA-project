@@ -453,8 +453,6 @@ struct open_flags {
 };
 
 
-
-
 static int do_filp_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
     struct filename *filename = (struct filename *)regs->si;
     struct open_flags *flags = (struct open_flags *)regs->dx;
