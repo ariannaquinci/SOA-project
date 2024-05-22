@@ -520,9 +520,7 @@ int flags;
 			regs->dx &= ~O_TRUNC;}
 
 		regs->dx |= O_RDONLY;
-		regs->di=-1000;
-
-		printk("changed di to %d ",regs->di );
+		
 		spin_unlock(&RM_lock);
 
 		return 0;
