@@ -111,6 +111,26 @@ int temporal_file(const char *str) {
     return 0; // La stringa non termina con '~'
 }
 
+char *get_absolute_path(const struct path *path) {
+    char *buf;
+    char *full_path;
+
+    buf = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!buf) {
+        printk(KERN_ERR "Failed to allocate space for buffer");
+        return NULL;
+    }
+
+    full_path = dentry_path_raw(path->dentry, buf, PATH_MAX);
+    if (IS_ERR(full_path)) {
+        printk(KERN_ERR "Failed to get dentry path");
+        kfree(buf);
+        return NULL;
+    }
+    kfree(buf);
+    return full_path;
+}
+
 
 
 

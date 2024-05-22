@@ -8,10 +8,10 @@
 #include <linux/cdev.h>
 #include <linux/errno.h>
 #include <linux/device.h>
+#include <linux/stat.h>
 #include <linux/kprobes.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
-#include <linux/stat.h>
 #include <linux/sched.h>
 #include <linux/version.h>
 #include <linux/interrupt.h>
@@ -31,7 +31,7 @@
 #include "my_crypto.h"
 #include "RM_utils.h"
 
-#define target_func0 "do_sys_open"
+#define target_func0 "do_filp_open"
 #define target_func1 "vfs_mkdir"
 #define target_func3 "vfs_unlink"
 #define target_func2 "vfs_rmdir"
@@ -444,94 +444,9 @@ struct filename {
 	const char		iname[];
 };*/
 
-struct open_flags {
-	int open_flag;
-	umode_t mode;
-	int acc_mode;
-	int intent;
-	int lookup_flags;
-};
 
 
 
-static int do_sys_open_wrapper(struct kprobe *kp, struct pt_regs *regs) {
-    
-    
-    char *directory;
-    char* abs_path;
- 
-    char *name=(char*) regs->si;
-    
-    if (!name) {
-        pr_err("Error getting file name\n");
-        return 0;
-    }
-    
-    int open_mode= (int)regs->dx;
-    
-    if (!(open_mode & (O_CREAT | O_RDWR | O_WRONLY))) {
-    	//if open mode is not OCREAT ORDWR OWRONLY return immediately
-        return 0;
-    }
-
-    if (strncmp(name, "/run", strlen("/run")) == 0 ||
-        strncmp(name, "/tmp", strlen("/tmp")) == 0 ||
-        strncmp(name, "/var/tmp", strlen("/var/tmp")) == 0 ||
-        strncmp(name, "/dev/reference_monitor", strlen("/dev/reference_monitor")) == 0) {
-        return 0; // Skip further processing
-    }
-
-    abs_path = get_absolute_path_by_name(name);
-    if (!abs_path) {
-        directory = get_cwd();
-        char *path = custom_dirname(name);
-        path = get_absolute_path_by_name(path);
-        if (path) {
-            directory = path;
-        }
-    } else {
-        directory = abs_path;
-    }
-
-    if (!directory) {
-        pr_err("Error getting directory\n");
-        return 0;
-    }
-int flags;
-	flags=regs->dx;
-    // Lock per proteggere l'accesso alla blacklist
-    spin_lock(&RM_lock);
-
-	while (directory && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
-	if (checkBlacklist(directory) == -EPERM) {
-		pr_err("Error: path or its parent directory is in blacklist: %s\n", directory);
-		schedule_deferred_work();
-
-		if (open_mode & O_CREAT){
-			regs->dx &= ~O_CREAT;}
-
-
-		if (open_mode & O_RDWR){
-			regs->dx &= ~O_RDWR;}
-
-		if (open_mode & O_WRONLY){
-			regs->dx &= ~O_WRONLY;}
-		if (open_mode & O_TRUNC){
-			regs->dx &= ~O_TRUNC;}
-
-		regs->dx |= O_RDONLY;
-		
-		spin_unlock(&RM_lock);
-
-		return 0;
-	}
-
-	directory = custom_dirname(directory);
-	}
-
-    spin_unlock(&RM_lock);
-    return 0;
-}
 
 void set_inode_read_only(struct inode *inode) {
 	
@@ -744,6 +659,91 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 }
 
 
+struct open_flags {
+	int open_flag;
+	umode_t mode;
+	int acc_mode;
+	int intent;
+	int lookup_flags;
+};
+
+
+static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
+	
+		struct open_flags *flags; 
+		char *name;
+		
+		int open_mode ;
+		char *abs_path;
+		
+	
+		name= ((struct filename *)(regs->si))->name;
+		if (IS_ERR(name)) {
+			pr_err(KERN_ERR "Error getting filename\n");
+			return 0;
+		}
+		//se file sono temporanei ritorno subito idem se il file è il dispositivo reference_monitor
+		if (((strncmp(name, "/run", strlen("/run"))) == 0)
+		||((strncmp(name, "/tmp", strlen("/tmp"))) == 0) 
+		||((strncmp(name, "/var/tmp", strlen("/var/tmp"))) == 0)
+		||((strncmp(name, "/dev/reference_monitor", strlen("/dev/reference_monitor"))) == 0) ){
+			return 0;
+		}
+		flags= (struct open_flags *)(regs->dx); //access to dx that is the thirth argument
+		open_mode =flags->open_flag;
+		unsigned long fd;
+		fd= regs->di;
+		char *directory;
+		abs_path=get_absolute_path_by_name(name);
+		if(open_mode & O_CREAT && abs_path==NULL){
+			char* path;
+			directory=get_cwd();
+			//if file doesn't exist yet I take its parent directory and retrieve the absolute path
+			path=custom_dirname(name);
+			
+			path=get_absolute_path_by_name(path);
+			if(path!=NULL){
+				directory=path;}
+			
+			   
+			   
+			     
+        	}		
+		
+		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
+			
+			abs_path=get_absolute_path_by_name(name);
+			
+			directory = abs_path;
+			
+		}
+		spin_lock(&RM_lock);
+		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        		
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			        //calling the function that permits to write to the append-only file
+		       	
+			        schedule_deferred_work();
+			        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
+			        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
+			        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
+			     	flags->open_flag&= O_RDONLY;
+			      
+			       
+				spin_unlock(&RM_lock);
+			        return 0;
+			    }
+			   
+			    directory = custom_dirname(directory);
+}
+			spin_unlock(&RM_lock);
+		return 0;
+}
+
+
+
+
 
 static int RM_open(struct inode *inode, struct file *file) {
 
@@ -765,7 +765,7 @@ static struct file_operations fops = {
 
 static struct kprobe kp_open = {
     .symbol_name = target_func0,
-    .pre_handler = do_sys_open_wrapper,
+    .pre_handler = do_filp_open_wrapper,
 };
 
 static struct kprobe kp_vfs_unlink = {
