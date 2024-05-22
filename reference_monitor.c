@@ -129,13 +129,17 @@ bool check_passwd(char* pw){
 	ret=do_sha256(pw, pw_digest,strlen(pw));
 	if(ret!=0){
 		printk(KERN_ERR "error in calculating sha256 of the password");
+		kfree(pw_digest);
 		spin_unlock(&RM_lock);
 		return false;
 	}
 	if(strncmp(pw_digest, info.passwd, my_min(pw_digest, strlen(info.passwd)))==0){
+	kfree(pw_digest);
 	spin_unlock(&RM_lock);
 		return true;
-	}else{spin_unlock(&RM_lock);
+	}else{kfree(pw_digest);
+	spin_unlock(&RM_lock);
+	
 		return false;
 	}
 }
@@ -597,13 +601,13 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 	 }
     // Get the full path of the dentry
     name =dentry_path_raw(regs->dx, buf, MAX_LEN);
+    kfree(buf);
     printk("name is %s", name);
     if (!name) {
         printk(KERN_ALERT "Failed to get dentry path\n");
-        kfree(buf);
+        
         return -ENOMEM;
     }
-    kfree(buf);
 
     if (IS_ERR(name)) {
         pr_err(KERN_ERR "Errore nell'ottenere il nome del file\n");
@@ -682,6 +686,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			pr_err(KERN_ERR "Error getting filename\n");
 			return 0;
 		}
+		
 		//se file sono temporanei ritorno subito idem se il file è il dispositivo reference_monitor
 		if (((strncmp(name, "/run", strlen("/run"))) == 0)
 		||((strncmp(name, "/tmp", strlen("/tmp"))) == 0) 
@@ -694,11 +699,12 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		unsigned long fd;
 		fd= regs->di;
 		char *directory;
+		
 		abs_path=get_absolute_path_by_name(name);
+		//two cases: file exists or not
 		if(open_mode & O_CREAT && abs_path==NULL){
 			char* path;
 			directory=get_cwd();
-			//if file doesn't exist yet I take its parent directory and retrieve the absolute path
 			path=custom_dirname(name);
 			
 			path=get_absolute_path_by_name(path);
@@ -710,7 +716,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			     
         	}		
 		
-		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY) {
+		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC && abs_path!=NULL) {
 			
 			abs_path=get_absolute_path_by_name(name);
 			
@@ -726,6 +732,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		       	
 			        schedule_deferred_work();
 			        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
+			        if(open_mode & O_TRUNC){flags->open_flag&=~O_TRUNC;}
 			        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
 			        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
 			     	flags->open_flag&= O_RDONLY;
@@ -736,8 +743,8 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			    }
 			   
 			    directory = custom_dirname(directory);
-}
-			spin_unlock(&RM_lock);
+		}
+		spin_unlock(&RM_lock);
 		return 0;
 }
 

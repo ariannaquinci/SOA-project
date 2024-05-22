@@ -89,13 +89,15 @@ char *get_cwd(void){
 	printk("into get_cwd");
 	struct path abs_path;
     	char *buf;
-    	
+    	 char *full_path;
 	buf = kmalloc(1024,GFP_KERNEL);
 	if(buf == NULL) return "";
 
     	get_fs_pwd(current->fs, &abs_path);
-
-    	return dentry_path_raw(abs_path.dentry, buf, PATH_MAX);
+	
+    	full_path=dentry_path_raw(abs_path.dentry, buf, PATH_MAX);
+    	kfree(buf);
+    	return full_path;
 }
 
 int temporal_file(const char *str) {
@@ -111,25 +113,7 @@ int temporal_file(const char *str) {
     return 0; // La stringa non termina con '~'
 }
 
-char *get_absolute_path(const struct path *path) {
-    char *buf;
-    char *full_path;
 
-    buf = kmalloc(PATH_MAX, GFP_KERNEL);
-    if (!buf) {
-        printk(KERN_ERR "Failed to allocate space for buffer");
-        return NULL;
-    }
-
-    full_path = dentry_path_raw(path->dentry, buf, PATH_MAX);
-    if (IS_ERR(full_path)) {
-        printk(KERN_ERR "Failed to get dentry path");
-        kfree(buf);
-        return NULL;
-    }
-    kfree(buf);
-    return full_path;
-}
 
 
 
@@ -142,11 +126,11 @@ char * get_absolute_path_by_name(char *name) {
 		
 		return NULL;
 	}
-	char *result= (char*)kmalloc(sizeof(char)*PATH_MAX,GFP_KERNEL);
+	char *result= (char*)kmalloc(PATH_MAX,GFP_KERNEL);
 	char* abs_path;
 	if (!result) {
-	printk(KERN_ERR "Error allocating memory for result");
-	return NULL;
+		printk(KERN_ERR "Error allocating memory for result");
+		return NULL;
 	}
 	memset(result,0, PATH_MAX);
 	if (!err) {
@@ -167,6 +151,7 @@ char * get_absolute_path_by_name(char *name) {
 	return abs_path;
 }
 
+
 char *custom_dirname(char *path) {
     static char parent[PATH_MAX];
     int len = strlen(path);
@@ -185,32 +170,4 @@ char *custom_dirname(char *path) {
     return parent;
 }
 
-// Create a restricted user namespace
-struct user_namespace *create_restricted_user_ns(void) {
-    struct user_namespace *new_ns;
-    struct cred *new_cred;
-
-    new_ns = kzalloc(sizeof(struct user_namespace), GFP_KERNEL);
-    if (!new_ns) {
-        printk(KERN_ALERT "Failed to allocate memory for user namespace\n");
-        return ERR_PTR(-ENOMEM);
-    }
-
-    // Initialize the user namespace structure
-    *new_ns = (struct user_namespace){
-        .parent = current_user_ns(),
-        .level = current_user_ns()->level + 1,
-        .owner = current_uid(),
-        .group = current_gid(),
-    };
-
-    // Restrict the new user namespace
-    new_ns->uid_map.nr_extents = 0;
-    new_ns->gid_map.nr_extents = 0;
-
-    // Optionally, set other fields to restrict permissions further
-    // new_ns->flags = ...
-
-    return new_ns;
-}
 
