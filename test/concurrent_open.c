@@ -6,7 +6,7 @@
 #include <sys/stat.h>
 #include <string.h>
 
-#define NUM_THREADS 10
+#define NUM_THREADS 5
 #define DIR_PATH "/home/arianna/try"
 
 void *create_file(void *arg) {
