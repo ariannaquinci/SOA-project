@@ -453,14 +453,13 @@ struct filename {
 
 
 void set_inode_read_only(struct inode *inode) {
-	
-    unsigned int mask = ~(S_IWUSR | S_IWGRP | S_IWOTH);
-  
-
- 	
-    inode->i_mode &= mask;
+    unsigned int mask = S_IWUSR | S_IWGRP | S_IWOTH;
+    inode->i_mode &= ~mask;
+    //to avoid sudo to change permissions set immutable
+    inode->i_flags |= S_IMMUTABLE;
     inode->i_ctime = inode->i_mtime = inode->i_atime = current_time(inode);
 }
+
 
 int save_original_flags(struct inode *inode, char *directory){
 	printk("saving flags");
