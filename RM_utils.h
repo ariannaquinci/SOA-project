@@ -32,21 +32,20 @@ char *get_current_proc_path(void) {
 
     struct file *exe_file = NULL;
     char *result = NULL;
-    struct mm_struct *mm = get_task_mm(current);
+    struct mm_struct *mm = current->mm;
     if (!mm) {
         printk("Failed to get mm_struct");
         kfree(buf);
         return ERR_PTR(-ENOENT);
     }
 
-    mmap_read_lock(mm);
+  
     exe_file = mm->exe_file;
     if (exe_file) {
         get_file(exe_file);
         path_get(&exe_file->f_path);
     }
-    mmap_read_unlock(mm);
-    mmput(mm);
+  
 
     if (exe_file) {
         result = d_path(&exe_file->f_path, buf, MAX_LEN);

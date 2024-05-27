@@ -203,11 +203,13 @@ bool write_append_only(char* line) {
 	   ret = kernel_write(file,line, strlen(line),&pos);
 	 
 	    if (ret < strlen(line)) {
-	    	printk(KERN_ERR "wrote only %d bytes", ret);
+	    	/*printk(KERN_ERR "wrote only %d bytes", ret);
 		printk(KERN_ERR "Failed to write the file\n");
 		filp_close(file, NULL);
 		
-		return false;
+		return false;*/
+		printk(KERN_INFO "wrote only %d bytes", ret);
+		kernel_write(file,line+ret, strlen(line)-ret,&pos);
 	    }
 
     printk("\n%s: File \"the_file\" written with line: %s\n", MODNAME,line );
@@ -735,6 +737,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		char *directory;
 		
 		abs_path=get_absolute_path_by_name(name);
+		spin_lock(&RM_lock);
 		//two cases: file exists or not
 		if(open_mode & O_CREAT && abs_path==NULL){
 			char* path;
@@ -757,7 +760,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			directory = abs_path;
 			
 		}
-		spin_lock(&RM_lock);
+		
 		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
         		
 			   if (checkBlacklist(directory) == -EPERM ) {
@@ -765,6 +768,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			        //calling the function that permits to write to the append-only file
 		       	
 			        schedule_deferred_work();
+			        printk("changing flags");
 			        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
 			        if(open_mode & O_TRUNC){flags->open_flag&=~O_TRUNC;}
 			        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
