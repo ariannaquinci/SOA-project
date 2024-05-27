@@ -219,19 +219,48 @@ bool write_append_only(char* line) {
 
 void do_deferred_work(struct work_struct *work) {
     deferred_work_data *data = container_of(work, deferred_work_data, work);
-    unsigned char prev_hash[HASH_SIZE] = {0};  // Inizializza a zero
-    unsigned char curr_hash[HASH_SIZE];  // Hash corrente
-    unsigned char buffer[BLOCK_SIZE];  // Buffer per leggere i blocchi
-    unsigned char encoded_buffer[BLOCK_SIZE];
+    unsigned char *prev_hash;// Inizializza a zero
+    unsigned char *curr_hash;  // Hash corrente
+    unsigned char *buffer;  // Buffer per leggere i blocchi
+
     struct file *filp;
     ssize_t bytes_read;
     int ret;
-    char line[RECORD_SIZE];
-
+    char *line;
+	prev_hash=kmalloc(HASH_SIZE, GFP_KERNEL);
+	if(!prev_hash){
+		 printk(KERN_ERR "Failed to allocate memory\n");
+       	 return;
+	}
+	curr_hash=kmalloc(HASH_SIZE, GFP_KERNEL);
+	if(!prev_hash){
+		 printk(KERN_ERR "Failed to allocate memory\n");
+		 kfree(prev_hash);
+       	 return;
+	}
+	buffer=kmalloc(BUFFER_SIZE, GFP_KERNEL);
+	if(!buffer){
+		 printk(KERN_ERR "Failed to allocate memory\n");
+		 kfree(prev_hash);
+       	 kfree(curr_hash);
+       	 return;
+	}
+	line=kmalloc(RECORD_SIZE, GFP_KERNEL);
+	if(!buffer){
+		 printk(KERN_ERR "Failed to allocate memory\n");
+		 kfree(prev_hash);
+       	 kfree(curr_hash);
+       	 kfree(buffer);
+       	 return;
+	}
     // Apri il file eseguibile in modalità di sola lettura
     filp = filp_open(data->deferred_record.program_path, O_RDONLY, 0);
     if (IS_ERR(filp)) {
         printk(KERN_ERR "Failed to open executable file\n");
+        kfree(prev_hash);
+        kfree(curr_hash);
+        kfree(buffer);
+        kfree(line);
         return;
     }
 
@@ -239,16 +268,15 @@ void do_deferred_work(struct work_struct *work) {
     loff_t offset = 0;
     while ((bytes_read = kernel_read(filp, buffer, BLOCK_SIZE, &offset)) > 0) {
         // Calcola l'hash del blocco corrente
-         ret=base64_encode( buffer,encoded_buffer, bytes_read);
-         if (ret < 0) {
-            printk(KERN_ERR "Failed to encode base64\n");
-            filp_close(filp, NULL);
-            return;
-        }
-        ret = do_sha256(encoded_buffer, curr_hash, bytes_read);
+         
+        ret = do_sha256(buffer, curr_hash, bytes_read);
         if (ret < 0) {
             printk(KERN_ERR "Failed to calculate hash\n");
             filp_close(filp, NULL);
+            kfree(prev_hash);
+        kfree(curr_hash);
+        kfree(buffer);
+        kfree(line);
             return;
         }
 
@@ -273,7 +301,12 @@ void do_deferred_work(struct work_struct *work) {
             printk(KERN_ERR "Impossible to write append only\n");
         }
     }
+	kfree(prev_hash);
+        kfree(curr_hash);
+        kfree(buffer);
+        kfree(line);
 }
+
 
 void schedule_deferred_work(void) {
    
@@ -284,6 +317,7 @@ void schedule_deferred_work(void) {
     data = kzalloc(sizeof(deferred_work_data), GFP_KERNEL);
     if (!data) {
         printk(KERN_ERR "Failed to allocate memory for deferred work\n");
+        
         return;
     }
 
