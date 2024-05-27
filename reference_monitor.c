@@ -227,25 +227,26 @@ void do_deferred_work(struct work_struct *work) {
     ssize_t bytes_read;
     int ret;
     char *line;
-	prev_hash=kmalloc(HASH_SIZE, GFP_KERNEL);
+	prev_hash=kzalloc(HASH_SIZE, GFP_KERNEL);
 	if(!prev_hash){
 		 printk(KERN_ERR "Failed to allocate memory\n");
        	 return;
 	}
-	curr_hash=kmalloc(HASH_SIZE, GFP_KERNEL);
+	
+	curr_hash=kzalloc(HASH_SIZE, GFP_KERNEL);
 	if(!prev_hash){
 		 printk(KERN_ERR "Failed to allocate memory\n");
 		 kfree(prev_hash);
        	 return;
 	}
-	buffer=kmalloc(BUFFER_SIZE, GFP_KERNEL);
+	buffer=kzalloc(BUFFER_SIZE, GFP_KERNEL);
 	if(!buffer){
 		 printk(KERN_ERR "Failed to allocate memory\n");
 		 kfree(prev_hash);
        	 kfree(curr_hash);
        	 return;
 	}
-	line=kmalloc(RECORD_SIZE, GFP_KERNEL);
+	line=kzalloc(RECORD_SIZE, GFP_KERNEL);
 	if(!buffer){
 		 printk(KERN_ERR "Failed to allocate memory\n");
 		 kfree(prev_hash);
