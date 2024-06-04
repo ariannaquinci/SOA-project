@@ -21,8 +21,8 @@ clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 	
 remove:
-	rm image
-	rmdir mount
+	rm -rf image
+	rm -rf mount
 	
 	
 	

@@ -10,7 +10,6 @@
 #include <linux/device.h>
 #include <linux/stat.h>
 #include <linux/kprobes.h>
-#include <linux/mutex.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/version.h>
@@ -28,8 +27,8 @@
 #include <linux/fs.h>
 #include <linux/path.h>
 #include <linux/slab.h>
-#include "my_crypto.h"
-#include "RM_utils.h"
+#include "my_crypto.c"
+#include "RM_utils.c"
 
 #define target_func0 "do_filp_open"
 #define target_func1 "vfs_mkdir"
@@ -120,7 +119,7 @@ static void restore_inode_flags_by_path(const char *path) {
 
 bool check_passwd(char* pw){
 	printk("checking pw");
-	spin_lock(&RM_lock);
+	
 	unsigned char *pw_digest;
 	pw_digest=kmalloc(33,GFP_KERNEL);
 	memset(pw_digest,0,33);
@@ -130,15 +129,16 @@ bool check_passwd(char* pw){
 	if(ret!=0){
 		printk(KERN_ERR "error in calculating sha256 of the password");
 		kfree(pw_digest);
-		spin_unlock(&RM_lock);
+		
 		return false;
 	}
+	spin_lock(&RM_lock);
 	if(strncmp(pw_digest, info.passwd, my_min(pw_digest, strlen(info.passwd)))==0){
-	kfree(pw_digest);
-	spin_unlock(&RM_lock);
+		kfree(pw_digest);
+		spin_unlock(&RM_lock);
 		return true;
 	}else{kfree(pw_digest);
-	spin_unlock(&RM_lock);
+		spin_unlock(&RM_lock);
 	
 		return false;
 	}
@@ -147,12 +147,13 @@ bool check_passwd(char* pw){
 
 int RM_change_pw(char *new){
 	
-	spin_lock(&RM_lock);
+	
 	if(strlen(new)> PASS_LEN-1){ 
 		printk(KERN_ERR "too long password");
-		spin_unlock(&RM_lock);
-		return -1;}
-	
+		
+		return -1;
+	}
+	spin_lock(&RM_lock);
 	do_sha256(new, info.passwd, strlen(new));
 	
 	spin_unlock(&RM_lock);
@@ -220,94 +221,94 @@ bool write_append_only(char* line) {
 
 
 void do_deferred_work(struct work_struct *work) {
-    deferred_work_data *data = container_of(work, deferred_work_data, work);
-    unsigned char *prev_hash;// Inizializza a zero
-    unsigned char *curr_hash;  // Hash corrente
-    unsigned char *buffer;  // Buffer per leggere i blocchi
+	deferred_work_data *data = container_of(work, deferred_work_data, work);
+	unsigned char *prev_hash;// Inizializza a zero
+	unsigned char *curr_hash;  // Hash corrente
+	unsigned char *buffer;  // Buffer per leggere i blocchi
 
-    struct file *filp;
-    ssize_t bytes_read;
-    int ret;
-    char *line;
+	struct file *filp;
+	ssize_t bytes_read;
+	int ret;
+	char *line;
 	prev_hash=kzalloc(HASH_SIZE, GFP_KERNEL);
 	if(!prev_hash){
-		 printk(KERN_ERR "Failed to allocate memory\n");
-       	 return;
+		printk(KERN_ERR "Failed to allocate memory\n");
+		return;
 	}
-	
+
 	curr_hash=kzalloc(HASH_SIZE, GFP_KERNEL);
 	if(!prev_hash){
-		 printk(KERN_ERR "Failed to allocate memory\n");
-		 kfree(prev_hash);
-       	 return;
+		printk(KERN_ERR "Failed to allocate memory\n");
+		kfree(prev_hash);
+		return;
 	}
 	buffer=kzalloc(BUFFER_SIZE, GFP_KERNEL);
 	if(!buffer){
-		 printk(KERN_ERR "Failed to allocate memory\n");
-		 kfree(prev_hash);
-       	 kfree(curr_hash);
-       	 return;
+		printk(KERN_ERR "Failed to allocate memory\n");
+		kfree(prev_hash);
+		kfree(curr_hash);
+	return;
 	}
 	line=kzalloc(RECORD_SIZE, GFP_KERNEL);
 	if(!buffer){
-		 printk(KERN_ERR "Failed to allocate memory\n");
-		 kfree(prev_hash);
-       	 kfree(curr_hash);
-       	 kfree(buffer);
-       	 return;
+		printk(KERN_ERR "Failed to allocate memory\n");
+		kfree(prev_hash);
+		kfree(curr_hash);
+		kfree(buffer);
+		return;
 	}
-    // Apri il file eseguibile in modalità di sola lettura
-    filp = filp_open(data->deferred_record.program_path, O_RDONLY, 0);
-    if (IS_ERR(filp)) {
-        printk(KERN_ERR "Failed to open executable file\n");
-        kfree(prev_hash);
-        kfree(curr_hash);
-        kfree(buffer);
-        kfree(line);
-        return;
-    }
+	// Apri il file eseguibile in modalità di sola lettura
+	filp = filp_open(data->deferred_record.program_path, O_RDONLY, 0);
+	if (IS_ERR(filp)) {
+		printk(KERN_ERR "Failed to open executable file\n");
+		kfree(prev_hash);
+		kfree(curr_hash);
+		kfree(buffer);
+		kfree(line);
+		return;
+	}
 
-    // Leggi i dati blocco per blocco fino alla fine del file
-    loff_t offset = 0;
-    while ((bytes_read = kernel_read(filp, buffer, BLOCK_SIZE, &offset)) > 0) {
-        // Calcola l'hash del blocco corrente
-         
-        ret = do_sha256(buffer, curr_hash, bytes_read);
-        if (ret < 0) {
-            printk(KERN_ERR "Failed to calculate hash\n");
-            filp_close(filp, NULL);
-            kfree(prev_hash);
-        kfree(curr_hash);
-        kfree(buffer);
-        kfree(line);
-            return;
-        }
+	// Leggi i dati blocco per blocco fino alla fine del file
+	loff_t offset = 0;
+	while ((bytes_read = kernel_read(filp, buffer, BLOCK_SIZE, &offset)) > 0) {
+	// Calcola l'hash del blocco corrente
+	 
+	ret = do_sha256(buffer, curr_hash, bytes_read);
+	if (ret < 0) {
+		printk(KERN_ERR "Failed to calculate hash\n");
+		filp_close(filp, NULL);
+		kfree(prev_hash);
+		kfree(curr_hash);
+		kfree(buffer);
+		kfree(line);
+		return;
+	}
 
-        // Fai lo XOR tra l'hash del blocco corrente e l'hash accumulato precedentemente
-        int i;
-        for (i = 0; i < HASH_SIZE; i++) {
-            prev_hash[i] ^= curr_hash[i];
-        }
+	// Fai lo XOR tra l'hash del blocco corrente e l'hash accumulato precedentemente
+	int i;
+	for (i = 0; i < HASH_SIZE; i++) {
+	    prev_hash[i] ^= curr_hash[i];
+	}
 
-    }
+	}
 
-    // Chiudi il file
-    filp_close(filp, NULL);
+	// Chiudi il file
+	filp_close(filp, NULL);
 
-    // Converti l'hash finale in una stringa
-    hash_to_string(prev_hash, data->deferred_record.content_hash);
+	// Converti l'hash finale in una stringa
+	hash_to_string(prev_hash, data->deferred_record.content_hash);
 
-   
-    // Scrivi su file
-    if (concatenate_record_to_buffer(data, line)) {
-        if (!write_append_only(line)) {
-            printk(KERN_ERR "Impossible to write append only\n");
-        }
-    }
+
+	// Scrivi su file
+	if (concatenate_record_to_buffer(data, line)) {
+		if (!write_append_only(line)) {
+		    printk(KERN_ERR "Impossible to write append only\n");
+		}
+	}
 	kfree(prev_hash);
-        kfree(curr_hash);
-        kfree(buffer);
-        kfree(line);
+	kfree(curr_hash);
+	kfree(buffer);
+	kfree(line);
 }
 
 
@@ -577,7 +578,7 @@ static int vfs_mkdir_wrapper(struct kprobe *p, struct pt_regs *regs){
     }
 
     directory = full_path;
-	spin_lock(&RM_lock);
+    spin_lock(&RM_lock);
     while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0) {
     	
         if (checkBlacklist(directory) == -EPERM) {
@@ -716,22 +717,19 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		int open_mode ;
 		char *abs_path;
 		
-	
+		
 		name= ((struct filename *)(regs->si))->name;
 		if (IS_ERR(name)) {
 			pr_err(KERN_ERR "Error getting filename\n");
 			return 0;
 		}
 		
-		//se file sono temporanei ritorno subito idem se il file è il dispositivo reference_monitor
-		if (((strncmp(name, "/run", strlen("/run"))) == 0)
-		||((strncmp(name, "/tmp", strlen("/tmp"))) == 0) 
-		||((strncmp(name, "/var/tmp", strlen("/var/tmp"))) == 0)
-		||((strncmp(name, "/dev/reference_monitor", strlen("/dev/reference_monitor"))) == 0) ){
-			return 0;
-		}
+		
 		flags= (struct open_flags *)(regs->dx); //access to dx that is the thirth argument
 		open_mode =flags->open_flag;
+		if(!(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC)){
+			return 0;
+		}
 		unsigned long fd;
 		fd= regs->di;
 		char *directory;
@@ -769,13 +767,8 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		       	
 			        schedule_deferred_work();
 			        printk("changing flags");
-			        if(open_mode & O_CREAT){flags->open_flag&=~O_CREAT;}
-			        if(open_mode & O_TRUNC){flags->open_flag&=~O_TRUNC;}
-			        if(open_mode & O_RDWR){flags->open_flag&=~O_RDWR;}
-			        if(open_mode &O_WRONLY){flags->open_flag&=~O_WRONLY;}
-			     	flags->open_flag&= O_RDONLY;
+			        flags->open_flag=0;
 			      
-			       
 				spin_unlock(&RM_lock);
 			        return 0;
 			    }
@@ -987,8 +980,8 @@ int init_module(void) {
         }
         
   
-       register_kprobe(&kp_vfs_rmdir);
-         if (ret < 0) {
+        register_kprobe(&kp_vfs_rmdir);
+        if (ret < 0) {
                 printk(KERN_ERR "%s: kprobe rmdir registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
@@ -997,33 +990,33 @@ int init_module(void) {
         reference_monitor_off();
         
 	
-         queue = create_singlethread_workqueue("recording_queue");
-    if (!queue) {
-        printk(KERN_ERR "Failed to create work queue\n");
-        return -1;
-    }
+        queue = create_singlethread_workqueue("recording_queue");
+	if (!queue) {
+		printk(KERN_ERR "Failed to create work queue\n");
+		return -1;
+	}
         
 	return 0;
 }
 
 
 void cleanup_module(void) {
-        printk("%s: shutting down\n",MODNAME);
-   	reference_monitor_off();
-       
-        //unregistering kprobes
+	printk("%s: shutting down\n",MODNAME);
+	reference_monitor_off();
 
-        unregister_kprobe(&kp_open);
-        
-         unregister_kprobe(&kp_vfs_unlink);
-         unregister_kprobe(&kp_mkdir);
-        
-       unregister_kprobe(&kp_vfs_rmdir);
-        
-        printk("%s: kprobes unregistered\n", MODNAME);
-        unregister_chrdev(Major, DEVICE_NAME);
-        printk(KERN_INFO "%s: device unregistered, it was assigned major number %d\n",DEVICE_NAME,Major);
-        printk("%s: Module correctly removed\n", MODNAME);
+	//unregistering kprobes
+
+	unregister_kprobe(&kp_open);
+
+	unregister_kprobe(&kp_vfs_unlink);
+	unregister_kprobe(&kp_mkdir);
+
+	unregister_kprobe(&kp_vfs_rmdir);
+
+	printk("%s: kprobes unregistered\n", MODNAME);
+	unregister_chrdev(Major, DEVICE_NAME);
+	printk(KERN_INFO "%s: device unregistered, it was assigned major number %d\n",DEVICE_NAME,Major);
+	printk("%s: Module correctly removed\n", MODNAME);
 	destroy_workqueue(queue); 
 	printk("workqueue destroyed");    
 }

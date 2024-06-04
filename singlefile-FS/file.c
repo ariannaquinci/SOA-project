@@ -11,7 +11,7 @@
 #include <linux/uio.h>
 #include "singlefilefs.h"
 
-static spinlock_t lock_log; 
+static struct mutex lock_log; 
 
 ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t * off) {
 
@@ -27,10 +27,10 @@ ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t
     //this operation is not synchronized 
     //*off can be changed concurrently 
     //add synchronization if you need it for any reason
-    spin_lock(&lock_log);
+    mutex_lock(&lock_log);
     //check that *off is within boundaries
     if (*off >= file_size){
-    	 spin_unlock(&lock_log);
+    	 mutex_unlock(&lock_log);
         return 0;}
     else if (*off + len > file_size){
         len = file_size - *off;}
@@ -49,13 +49,13 @@ ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t
 
     bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
     if(!bh){
-    	spin_unlock(&lock_log);
+    	mutex_unlock(&lock_log);
 	return -EIO;
     }
     ret = copy_to_user(buf,bh->b_data + offset, len);
     *off += (len - ret);
     brelse(bh);
-    spin_unlock(&lock_log);
+    mutex_unlock(&lock_log);
     return len - ret;
 
 }
@@ -129,7 +129,7 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
    
     struct buffer_head *bh = NULL;
     struct inode * inode = filp->f_inode;
-    spin_lock(&lock_log);
+    mutex_lock(&lock_log);
     i_size_write(inode, inode->i_size);
     
     
@@ -149,7 +149,7 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
 
     bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
     if(!bh){
-    	   spin_unlock(&lock_log);
+    	   mutex_unlock(&lock_log);
 	return -EIO;
     }
     printk("len is %d and buf lenght is %d", len, strlen(buf)); 
@@ -161,7 +161,7 @@ ssize_t onefilefs_write(struct kiocb *kiocb, struct iov_iter *iter){
     inode->i_size = off; 
     i_size_write(inode, off);
     brelse(bh);
-    spin_unlock(&lock_log);
+    mutex_unlock(&lock_log);
     return len;
 }
 
