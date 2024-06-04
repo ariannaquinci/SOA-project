@@ -716,6 +716,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		
 		int open_mode ;
 		char *abs_path;
+		struct filename * fname=(struct filename *)regs->si;
 		
 		
 		name= ((struct filename *)(regs->si))->name;
@@ -744,11 +745,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			
 			path=get_absolute_path_by_name(path);
 			if(path!=NULL){
-				directory=path;}
-			
-			   
-			   
-			     
+				directory=path;}	     
         	}		
 		
 		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC && abs_path!=NULL) {
@@ -766,9 +763,8 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			        //calling the function that permits to write to the append-only file
 		       	
 			        schedule_deferred_work();
-			        printk("changing flags");
-			        flags->open_flag=0;
-			      
+			       
+			        regs->di=-1000;
 				spin_unlock(&RM_lock);
 			        return 0;
 			    }
