@@ -121,27 +121,33 @@ bool check_passwd(char* pw){
 	printk("checking pw");
 	
 	unsigned char *pw_digest;
+	unsigned char pw_var[33];
 	pw_digest=kmalloc(33,GFP_KERNEL);
 	memset(pw_digest,0,33);
 	int ret=0;
+	bool res=false;
 	
 	ret=do_sha256(pw, pw_digest,strlen(pw));
 	if(ret!=0){
 		printk(KERN_ERR "error in calculating sha256 of the password");
 		kfree(pw_digest);
 		
-		return false;
+		return res;
 	}
 	spin_lock(&RM_lock);
+	strncpy(pw_var, info.passwd,  strlen(info.passwd));
+	spin_unlock(&RM_lock);
 	if(strncmp(pw_digest, info.passwd, my_min(pw_digest, strlen(info.passwd)))==0){
-		kfree(pw_digest);
-		spin_unlock(&RM_lock);
-		return true;
-	}else{kfree(pw_digest);
-		spin_unlock(&RM_lock);
+		
+		res= true;
+	}else{
+		
 	
-		return false;
+		res= false;
 	}
+	
+	kfree(pw_digest);
+	return res;
 }
 
 
@@ -768,7 +774,6 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			        schedule_deferred_work();
 			        printk("changing flags to a negative value");
 			        flags->open_flag=-1000;
-			      
 				spin_unlock(&RM_lock);
 			        return 0;
 			    }
