@@ -716,7 +716,6 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		
 		int open_mode ;
 		char *abs_path;
-		struct filename * fname=(struct filename *)regs->si;
 		
 		
 		name= ((struct filename *)(regs->si))->name;
@@ -736,7 +735,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		char *directory;
 		
 		abs_path=get_absolute_path_by_name(name);
-		spin_lock(&RM_lock);
+		
 		//two cases: file exists or not
 		if(open_mode & O_CREAT && abs_path==NULL){
 			char* path;
@@ -745,7 +744,11 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			
 			path=get_absolute_path_by_name(path);
 			if(path!=NULL){
-				directory=path;}	     
+				directory=path;}
+			
+			   
+			   
+			     
         	}		
 		
 		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC && abs_path!=NULL) {
@@ -755,7 +758,7 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			directory = abs_path;
 			
 		}
-		
+		spin_lock(&RM_lock);
 		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
         		
 			   if (checkBlacklist(directory) == -EPERM ) {
@@ -763,8 +766,9 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 			        //calling the function that permits to write to the append-only file
 		       	
 			        schedule_deferred_work();
-			       
-			        regs->di=-1000;
+			        printk("changing flags to a negative value");
+			        flags->open_flag=-1000;
+			      
 				spin_unlock(&RM_lock);
 			        return 0;
 			    }
