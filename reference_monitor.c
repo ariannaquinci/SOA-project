@@ -30,7 +30,8 @@
 #include "my_crypto.c"
 #include "RM_utils.c"
 
-#define target_func0 "do_filp_open"
+//#define target_func0 "do_filp_open"
+#define target_func0 "do_sys_openat2"
 #define target_func1 "vfs_mkdir"
 #define target_func3 "vfs_unlink"
 #define target_func2 "vfs_rmdir"
@@ -137,7 +138,7 @@ bool check_passwd(char* pw){
 	spin_lock(&RM_lock);
 	strncpy(pw_var, info.passwd,  strlen(info.passwd));
 	spin_unlock(&RM_lock);
-	if(strncmp(pw_digest, info.passwd, my_min(pw_digest, strlen(info.passwd)))==0){
+	if(strncmp(pw_digest, pw_var, my_min(pw_digest, strlen(pw_var)))==0){
 		
 		res= true;
 	}else{
@@ -714,25 +715,23 @@ struct open_flags {
 	int lookup_flags;
 };
 
-
-static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
-	
-		struct open_flags *flags; 
+static int do_sys_openat_wrapper(struct kprobe *p, struct pt_regs *regs){
+		struct open_how *flags; 
 		char *name;
 		
 		int open_mode ;
 		char *abs_path;
 		
 		
-		name= ((struct filename *)(regs->si))->name;
+		name= (const char*)(regs->si);
 		if (IS_ERR(name)) {
 			pr_err(KERN_ERR "Error getting filename\n");
 			return 0;
 		}
 		
 		
-		flags= (struct open_flags *)(regs->dx); //access to dx that is the thirth argument
-		open_mode =flags->open_flag;
+		flags= (struct open_how *)(regs->dx); //access to dx that is the thirth argument
+		open_mode =flags->flags;
 		if(!(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC)){
 			return 0;
 		}
@@ -773,7 +772,8 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		       	
 			        schedule_deferred_work();
 			        printk("changing flags to a negative value");
-			        flags->open_flag=-1000;
+			       
+			        flags->flags=-1000;
 				spin_unlock(&RM_lock);
 			        return 0;
 			    }
@@ -783,10 +783,6 @@ static int do_filp_open_wrapper(struct kprobe *p, struct pt_regs *regs){
 		spin_unlock(&RM_lock);
 		return 0;
 }
-
-
-
-
 
 static int RM_open(struct inode *inode, struct file *file) {
 
@@ -808,7 +804,8 @@ static struct file_operations fops = {
 
 static struct kprobe kp_open = {
     .symbol_name = target_func0,
-    .pre_handler = do_filp_open_wrapper,
+  //  .pre_handler = do_filp_open_wrapper,
+    .pre_handler=do_sys_openat_wrapper,
 };
 
 static struct kprobe kp_vfs_unlink = {
