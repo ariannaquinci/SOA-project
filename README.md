@@ -11,12 +11,18 @@ To interact with the reference monitor you can use both:
 	- sudo ./user add_path `<new path>` `<your password>`
 	- sudo ./user remove_path `<path to remove>` `<your password>`
 
-In the directory "test" you'll find some test:
+In the directory "test" you'll find some test, to compile them use "make all", to clean the directory "make clean".
+Tests provided are:
 - concurrency_test.c contains tests to perform concurrent state changes of the RM by several threads. It will ask you to insert the password.
 - test.c let inserts a directory in the blacklist and tries to create a directory in it.
 - test-file.c inserts a directory in the blacklist and, after creating a file in it tries to open it in write mode.
-- test-rmdir creates a directory into the path that will be inserted into blacklist then it tries to remove it.
-- test-unlink like test-rmdir but instead of a diretcory it creates and deletes a file.
+- test-rmdir.c creates a directory into the path that will be inserted into blacklist then it tries to remove it.
+- test-unlink.c like test-rmdir but instead of a diretcory it creates and deletes a file.
+- concurrent_open.c performs concurrent open operations
+- rmdir_conc.c performs concurrent rmdir operations
+- conc.c performs concurrent adds and deletions of paths from RM blacklist
+- concurrent_path_oper.c performs concurrent mkdir operations
+
 
 
 	
