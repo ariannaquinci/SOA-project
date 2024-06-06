@@ -6,7 +6,7 @@
 
 #define DEVICE_PATH "/dev/reference_monitor" // Percorso del dispositivo nel sistema
 
-int main() {
+int main(void) {
     int fd;
     ssize_t bytes_written;
      

@@ -707,14 +707,6 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 }
 
 
-struct open_flags {
-	int open_flag;
-	umode_t mode;
-	int acc_mode;
-	int intent;
-	int lookup_flags;
-};
-
 static int do_sys_openat_wrapper(struct kprobe *p, struct pt_regs *regs){
 		struct open_how *flags; 
 		char *name;

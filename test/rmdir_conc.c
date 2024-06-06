@@ -15,7 +15,7 @@ void* delete_directory(void* arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     int fd;
     ssize_t bytes_written;
      

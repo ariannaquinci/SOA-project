@@ -39,7 +39,7 @@ void *perform_operation(void *args) {
     pthread_exit(NULL);
 }
 
-int main(int argc, char **argv) {
+int main(void) {
     pthread_t threads[NUM_THREADS];
     int i;
 

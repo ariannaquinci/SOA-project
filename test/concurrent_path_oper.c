@@ -27,7 +27,7 @@ void *create_directory(void *arg) {
     pthread_exit(NULL);
 }
 
-int main() {
+int main(void) {
     pthread_t threads[NUM_THREADS];
     int i;
 

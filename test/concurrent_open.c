@@ -9,7 +9,7 @@
 #define NUM_THREADS 5
 #define DIR_PATH "/home/arianna/try"
 
-void *create_file(void *arg) {
+void *create_file() {
     char filename[256];
     pid_t tgid = getpid();
     pthread_t tid = pthread_self();
@@ -30,7 +30,7 @@ void *create_file(void *arg) {
     pthread_exit(NULL);
 }
 
-int main() {
+int main(void) {
     pthread_t threads[NUM_THREADS];
     int i;
 
