@@ -706,7 +706,7 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 	
 }
 
-
+/*
 static int do_sys_openat_wrapper(struct kprobe *p, struct pt_regs *regs){
 		struct open_how *flags; 
 		char *name;
@@ -775,7 +775,86 @@ static int do_sys_openat_wrapper(struct kprobe *p, struct pt_regs *regs){
 		spin_unlock(&RM_lock);
 		return 0;
 }
+*/
 
+static int do_sys_openat_wrapper(struct kretprobe_instance *kp, struct pt_regs *regs){
+		struct open_how *flags; 
+		char *name;
+		
+		int open_mode ;
+		char *abs_path;
+		
+		
+		name= (const char*)(regs->si);
+		if (IS_ERR(name)) {
+			pr_err(KERN_ERR "Error getting filename\n");
+			return 1;
+		}
+		
+		
+		flags= (struct open_how *)(regs->dx); //access to dx that is the thirth argument
+		open_mode =flags->flags;
+		if(!(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC)){
+			return 1;
+		}
+		unsigned long fd;
+		fd= regs->di;
+		char *directory;
+		
+		abs_path=get_absolute_path_by_name(name);
+		
+		//two cases: file exists or not
+		if(open_mode & O_CREAT && abs_path==NULL){
+			char* path;
+			directory=get_cwd();
+			path=custom_dirname(name);
+			
+			path=get_absolute_path_by_name(path);
+			if(path!=NULL){
+				directory=path;}
+			
+			   
+			   
+			     
+        	}		
+		
+		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC && abs_path!=NULL) {
+			
+			abs_path=get_absolute_path_by_name(name);
+			
+			directory = abs_path;
+			
+		}
+		spin_lock(&RM_lock);
+		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
+        		
+			   if (checkBlacklist(directory) == -EPERM ) {
+			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
+			        //calling the function that permits to write to the append-only file
+		       	
+			        schedule_deferred_work();
+			        printk("changing flags to a negative value");
+			       
+			        flags->flags=-1000;
+				spin_unlock(&RM_lock);
+			        return 0;
+			    }
+			   
+			    directory = custom_dirname(directory);
+		}
+		spin_unlock(&RM_lock);
+		return 1;
+}
+
+static int post_handler(struct kretprobe_instance *kp, struct pt_regs *regs){
+	/*struct open_how * mode=(struct open_how *)regs->dx;
+	
+	if( mode->flags ==-1000){
+		regs->ax = -EACCES;}*/
+		
+	regs->ax = -EACCES;
+	return 0;
+}
 static int RM_open(struct inode *inode, struct file *file) {
 
 //device opened by a default nop
@@ -794,10 +873,10 @@ static struct file_operations fops = {
 };
 
 
-static struct kprobe kp_open = {
-    .symbol_name = target_func0,
-  //  .pre_handler = do_filp_open_wrapper,
-    .pre_handler=do_sys_openat_wrapper,
+static struct kretprobe kp_open = {
+    .kp.symbol_name = target_func0,
+    .entry_handler=do_sys_openat_wrapper,
+    .handler=post_handler
 };
 
 static struct kprobe kp_vfs_unlink = {
@@ -815,25 +894,28 @@ static struct kprobe kp_mkdir = {
        .pre_handler = vfs_mkdir_wrapper,
 };
 
+
 void modify_state(enum reference_monitor_state state){
 	printk("into modify state");
 	spin_lock(&RM_lock);
 	printk("state is %d", info.state);
 	if((info.state==OFF||info.state==REC_OFF) && (state==REC_ON ||state==ON )){
 		
-		enable_kprobe(&kp_open);
+		enable_kretprobe(&kp_open);
 	 	enable_kprobe(&kp_vfs_unlink);
 	 	enable_kprobe(&kp_mkdir);
 	 	enable_kprobe(&kp_vfs_rmdir);
+	 	
 		
 		
 	}
 	else if((info.state==ON||info.state==REC_ON) && (state==REC_OFF ||state==OFF)){
 		restore_inodes_flags();
-		disable_kprobe(&kp_open);
+		disable_kretprobe(&kp_open);
 		disable_kprobe(&kp_vfs_unlink);
 		disable_kprobe(&kp_vfs_rmdir);
 		disable_kprobe(&kp_mkdir);
+		
 	}
 	info.state=state;
 	
@@ -956,7 +1038,7 @@ int init_module(void) {
 	do_sha256("changeme", info.passwd,strlen("changeme"));
 	strncpy(info.blacklist[0],"This is the blacklist\0",strlen("This is the blacklist\0"));
 	
-	ret = register_kprobe(&kp_open);
+	ret = register_kretprobe(&kp_open);
 	if (ret < 0) {
                 printk(KERN_ERR "%s: kprobe filp open registering failed, returned %d\n",MODNAME,ret);
                 return ret;
@@ -974,13 +1056,12 @@ int init_module(void) {
         }
         
   
-        register_kprobe(&kp_vfs_rmdir);
+        ret=register_kprobe(&kp_vfs_rmdir);
         if (ret < 0) {
                 printk(KERN_ERR "%s: kprobe rmdir registering failed, returned %d\n",MODNAME,ret);
                 return ret;
         }
-        
-       
+    
         reference_monitor_off();
         
 	
@@ -1000,13 +1081,12 @@ void cleanup_module(void) {
 
 	//unregistering kprobes
 
-	unregister_kprobe(&kp_open);
+	unregister_kretprobe(&kp_open);
 
 	unregister_kprobe(&kp_vfs_unlink);
 	unregister_kprobe(&kp_mkdir);
 
 	unregister_kprobe(&kp_vfs_rmdir);
-
 	printk("%s: kprobes unregistered\n", MODNAME);
 	unregister_chrdev(Major, DEVICE_NAME);
 	printk(KERN_INFO "%s: device unregistered, it was assigned major number %d\n",DEVICE_NAME,Major);
