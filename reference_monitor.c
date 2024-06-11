@@ -466,36 +466,6 @@ int checkBlacklist(char* open_path){
 	return 0;
 }
 
-/*
-segnatura della do_filp_open: 
-
-	extern struct file *do_filp_open(int dfd, struct filename *pathname, const struct open_flags *op)
-	
-La struct open_flags è un parametro della funzione do_filp_open ed è fatta come segue:
-
-	struct open_flags {
-		int open_flag;
-		umode_t mode;
-		int acc_mode;
-		int intent;
-		int lookup_flags;
-	};
-	Dato che questa struct non è visibile dall'esterno la ridichiaro (non è marcata come extern)
-*/
-
-/*
-La struct filename è fatta come segue:
-struct filename {
-	const char		*name;	pointer to actual string 
-	const __user char	*uptr;	original userland pointer 
-	atomic_t		refcnt;
-	struct audit_names	*aname;
-	const char		iname[];
-};*/
-
-
-
-
 
 void set_inode_read_only(struct inode *inode) {
     unsigned int mask = S_IWUSR | S_IWGRP | S_IWOTH;
@@ -706,77 +676,6 @@ static int vfs_rm_wrapper(struct kprobe *p, struct pt_regs *regs){
 	
 }
 
-/*
-static int do_sys_openat_wrapper(struct kprobe *p, struct pt_regs *regs){
-		struct open_how *flags; 
-		char *name;
-		
-		int open_mode ;
-		char *abs_path;
-		
-		
-		name= (const char*)(regs->si);
-		if (IS_ERR(name)) {
-			pr_err(KERN_ERR "Error getting filename\n");
-			return 0;
-		}
-		
-		
-		flags= (struct open_how *)(regs->dx); //access to dx that is the thirth argument
-		open_mode =flags->flags;
-		if(!(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC)){
-			return 0;
-		}
-		unsigned long fd;
-		fd= regs->di;
-		char *directory;
-		
-		abs_path=get_absolute_path_by_name(name);
-		
-		//two cases: file exists or not
-		if(open_mode & O_CREAT && abs_path==NULL){
-			char* path;
-			directory=get_cwd();
-			path=custom_dirname(name);
-			
-			path=get_absolute_path_by_name(path);
-			if(path!=NULL){
-				directory=path;}
-			
-			   
-			   
-			     
-        	}		
-		
-		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC && abs_path!=NULL) {
-			
-			abs_path=get_absolute_path_by_name(name);
-			
-			directory = abs_path;
-			
-		}
-		spin_lock(&RM_lock);
-		while (directory != NULL && strcmp(directory, "") != 0 && strcmp(directory, " ") != 0 ){
-        		
-			   if (checkBlacklist(directory) == -EPERM ) {
-			        printk(KERN_ERR "Error: path or its parent directory is in blacklist: %s",directory);
-			        //calling the function that permits to write to the append-only file
-		       	
-			        schedule_deferred_work();
-			        printk("changing flags to a negative value");
-			       
-			        flags->flags=-1000;
-				spin_unlock(&RM_lock);
-			        return 0;
-			    }
-			   
-			    directory = custom_dirname(directory);
-		}
-		spin_unlock(&RM_lock);
-		return 0;
-}
-*/
-
 static int do_sys_openat_wrapper(struct kretprobe_instance *kp, struct pt_regs *regs){
 		struct open_how *flags; 
 		char *name;
@@ -811,11 +710,7 @@ static int do_sys_openat_wrapper(struct kretprobe_instance *kp, struct pt_regs *
 			
 			path=get_absolute_path_by_name(path);
 			if(path!=NULL){
-				directory=path;}
-			
-			   
-			   
-			     
+				directory=path;}     
         	}		
 		
 		else if(open_mode & O_CREAT || open_mode & O_RDWR || open_mode & O_WRONLY || open_mode & O_TRUNC && abs_path!=NULL) {
@@ -847,10 +742,6 @@ static int do_sys_openat_wrapper(struct kretprobe_instance *kp, struct pt_regs *
 }
 
 static int post_handler(struct kretprobe_instance *kp, struct pt_regs *regs){
-	/*struct open_how * mode=(struct open_how *)regs->dx;
-	
-	if( mode->flags ==-1000){
-		regs->ax = -EACCES;}*/
 		
 	regs->ax = -EACCES;
 	return 0;
